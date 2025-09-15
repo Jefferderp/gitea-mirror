@@ -29,7 +29,8 @@ export function mapUiToDbConfig(
 ): { githubConfig: DbGitHubConfig; giteaConfig: DbGiteaConfig } {
   // Map GitHub config to match database schema fields
   const dbGithubConfig: DbGitHubConfig = {
-    starredReposStrategy: "single-organization",
+    // Persist the user's selection; default to single-organization for BC
+    starredReposStrategy: githubConfig.starredReposStrategy ?? "single-organization",
     // Map username to owner field
     owner: githubConfig.username,
     type: "personal", // Default to personal, could be made configurable
@@ -119,6 +120,8 @@ export function mapDbToUiConfig(dbConfig: any): {
     token: dbConfig.githubConfig?.token || "",
     privateRepositories: dbConfig.githubConfig?.includePrivate || false, // Map includePrivate to privateRepositories
     mirrorStarred: dbConfig.githubConfig?.includeStarred || false, // Map includeStarred to mirrorStarred
+    // Surface user's persisted starred strategy to UI; default for BC
+    starredReposStrategy: dbConfig.githubConfig?.starredReposStrategy || "single-organization",
   };
 
   // Map from database Gitea config to UI fields
