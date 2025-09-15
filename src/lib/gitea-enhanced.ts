@@ -6,14 +6,14 @@
  * 3. Race conditions in parallel processing
  */
 
-import type { Config } from "@/types/config";
+import type { Config } from "./db/schema";
 import type { Repository } from "./db/schema";
 import { createMirrorJob } from "./helpers";
 import { decryptConfigTokens } from "./utils/config-encryption";
 import { httpPost, httpGet, httpPatch, HttpError } from "./http-client";
-import { db, repositories } from "./db";
+import { db, repositories, organizations } from "./db";
 import { eq } from "drizzle-orm";
-import { repoStatusEnum } from "@/types/Repository";
+import { repoStatusEnum } from "./db/schema";
 
 /**
  * Enhanced repository information including mirror status
@@ -72,12 +72,16 @@ export async function getOrCreateGiteaOrgEnhanced({
   config,
   maxRetries = 3,
   retryDelay = 100,
+  organizationType = "joined",
+  sourceOwner,
 }: {
   orgId?: string;
   orgName: string;
   config: Partial<Config>;
   maxRetries?: number;
   retryDelay?: number;
+  organizationType?: "joined" | "starred-owner";
+  sourceOwner?: string;
 }): Promise<number> {
   if (!config.giteaConfig?.url || !config.giteaConfig?.token || !config.userId) {
     throw new Error("Gitea config is required.");
@@ -133,8 +137,10 @@ export async function getOrCreateGiteaOrgEnhanced({
       const createOrgPayload = {
         username: orgName,
         full_name: orgName === "starred" ? "Starred Repositories" : orgName,
-        description: orgName === "starred" 
-          ? "Repositories starred on GitHub" 
+        description: orgName === "starred"
+          ? "Repositories starred on GitHub"
+          : organizationType === "starred-owner"
+          ? `Starred repositories from GitHub user: ${sourceOwner || orgName}`
           : `Mirrored from GitHub organization: ${orgName}`,
         website: "",
         location: "",
@@ -151,6 +157,15 @@ export async function getOrCreateGiteaOrgEnhanced({
         );
 
         console.log(`[Org Creation] Successfully created organization ${orgName} with ID: ${createResponse.data.id}`);
+        
+        // Create organization record in database
+        await createOrganizationRecord({
+          config,
+          orgName,
+          orgId: createResponse.data.id.toString(),
+          organizationType,
+          sourceOwner,
+        });
         
         await createMirrorJob({
           userId: config.userId,
@@ -462,24 +477,89 @@ export async function convertToMirror({
 export async function createOrganizationsSequentially({
   config,
   orgNames,
+  organizationType = "joined",
+  sourceOwners,
 }: {
   config: Partial<Config>;
   orgNames: string[];
+  organizationType?: "joined" | "starred-owner";
+  sourceOwners?: Map<string, string>; // Maps orgName to sourceOwner
 }): Promise<Map<string, number>> {
   const orgIdMap = new Map<string, number>();
   
   for (const orgName of orgNames) {
     try {
+      const sourceOwner = sourceOwners?.get(orgName);
       const orgId = await getOrCreateGiteaOrgEnhanced({
         orgName,
         config,
         maxRetries: 3,
         retryDelay: 100,
+        organizationType,
+        sourceOwner,
       });
       orgIdMap.set(orgName, orgId);
     } catch (error) {
       console.error(`Failed to create organization ${orgName}:`, error);
       // Continue with other organizations
+    }
+  }
+  
+  /**
+   * Create organization record in database
+   */
+  async function createOrganizationRecord({
+    config,
+    orgName,
+    orgId,
+    organizationType = "joined",
+    sourceOwner,
+  }: {
+    config: Partial<Config>;
+    orgName: string;
+    orgId: string;
+    organizationType?: "joined" | "starred-owner";
+    sourceOwner?: string;
+  }): Promise<void> {
+    if (!config.userId || !config.id) {
+      console.warn(`[Org Record] Cannot create organization record: missing userId or configId`);
+      return;
+    }
+  
+    try {
+      // Check if organization record already exists
+      const existingOrg = await db
+        .select()
+        .from(organizations)
+        .where(eq(organizations.name, orgName))
+        .limit(1);
+  
+      if (existingOrg.length > 0) {
+        console.log(`[Org Record] Organization ${orgName} already exists in database`);
+        return;
+      }
+  
+      // Create organization record
+      await db.insert(organizations).values({
+        id: crypto.randomUUID(),
+        userId: config.userId,
+        configId: config.id,
+        name: orgName,
+        avatarUrl: "", // Will be updated later if needed
+        membershipRole: "owner",
+        isIncluded: true,
+        organizationType,
+        sourceOwner,
+        status: "imported",
+        repositoryCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+  
+      console.log(`[Org Record] Created organization record for ${orgName} (type: ${organizationType})`);
+    } catch (error) {
+      console.error(`[Org Record] Failed to create organization record for ${orgName}:`, error);
+      // Don't throw - this is not critical for the mirroring process
     }
   }
   

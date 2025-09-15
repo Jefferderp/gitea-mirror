@@ -14,6 +14,8 @@ export interface OrganizationsApiSuccessResponse {
   success: true;
   message: string;
   organizations: Organization[];
+  joinedCount?: number;
+  starredOwnerCount?: number;
 }
 
 export interface OrganizationsApiErrorResponse {
@@ -36,6 +38,8 @@ export interface GitOrg {
   publicRepositoryCount?: number;
   privateRepositoryCount?: number;
   forkRepositoryCount?: number;
+  organizationType?: "joined" | "starred-owner";
+  sourceOwner?: string;
   createdAt: Date;
   updatedAt: Date;
 }

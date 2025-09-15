@@ -25,6 +25,7 @@ export const githubConfigSchema = z.object({
   includePublic: z.boolean().default(true),
   includeOrganizations: z.array(z.string()).default([]),
   starredReposOrg: z.string().optional(),
+  starredReposStrategy: z.enum(["single-organization", "preserve-structure"]).default("single-organization"),
   mirrorStrategy: z.enum(["preserve", "single-org", "flat-user", "mixed"]).default("preserve"),
   defaultOrg: z.string().optional(),
   skipStarredIssues: z.boolean().default(false),
@@ -206,6 +207,8 @@ export const organizationSchema = z.object({
   membershipRole: z.enum(["admin", "member", "owner"]).default("member"),
   isIncluded: z.boolean().default(true),
   destinationOrg: z.string().optional().nullable(),
+  organizationType: z.enum(["joined", "starred-owner"]).default("joined"),
+  sourceOwner: z.string().optional().nullable(),
   status: z
     .enum([
       "imported",
@@ -442,6 +445,13 @@ export const organizations = sqliteTable("organizations", {
 
   destinationOrg: text("destination_org"),
 
+  organizationType: text("organization_type")
+    .notNull()
+    .default("joined")
+    .$defaultFn(() => "joined"),
+  
+  sourceOwner: text("source_owner"),
+
   status: text("status").notNull().default("imported"),
   lastMirrored: integer("last_mirrored", { mode: "timestamp" }),
   errorMessage: text("error_message"),
@@ -462,6 +472,7 @@ export const organizations = sqliteTable("organizations", {
   index("idx_organizations_config_id").on(table.configId),
   index("idx_organizations_status").on(table.status),
   index("idx_organizations_is_included").on(table.isIncluded),
+  index("idx_organizations_type_source").on(table.organizationType, table.sourceOwner),
 ]);
 
 // ===== Better Auth Tables =====

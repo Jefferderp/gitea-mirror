@@ -13,6 +13,7 @@ export interface GiteaConfig {
   preserveOrgStructure: boolean;
   mirrorStrategy?: MirrorStrategy; // New field for the strategy
   personalReposOrg?: string; // Override destination for personal repos
+  starredReposStrategy?: "single-organization" | "preserve-structure"; // Strategy for organizing starred repos
 }
 
 export interface ScheduleConfig {
@@ -37,6 +38,7 @@ export interface GitHubConfig {
   privateRepositories: boolean;
   mirrorStarred: boolean;
   starredDuplicateStrategy?: DuplicateNameStrategy;
+  starredReposStrategy?: "single-organization" | "preserve-structure";
 }
 
 export interface MirrorOptions {

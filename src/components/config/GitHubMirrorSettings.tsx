@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { StarredReposStrategy } from "./StarredReposStrategy";
 
 interface GitHubMirrorSettingsProps {
   githubConfig: GitHubConfig;
@@ -153,7 +154,17 @@ export function GitHubMirrorSettings({
                 </p>
               </div>
             </div>
-
+  
+            {/* Starred Repos Strategy - only show when starred repos are enabled */}
+            {githubConfig.mirrorStarred && (
+              <div className="mt-4">
+                <StarredReposStrategy
+                  strategy={githubConfig.starredReposStrategy}
+                  onStrategyChange={(strategy) => handleGitHubChange('starredReposStrategy', strategy)}
+                />
+              </div>
+            )}
+  
             {/* Starred repos content selection - responsive layout */}
             <div className={cn(
               "flex items-center justify-end transition-opacity duration-200 mt-3 md:mt-0",

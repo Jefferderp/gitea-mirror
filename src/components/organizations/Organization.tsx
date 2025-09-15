@@ -50,6 +50,7 @@ export function Organization() {
     searchTerm: "",
     membershipRole: "",
     status: "",
+    organizationType: "",
   });
   const [loadingOrgIds, setLoadingOrgIds] = useState<Set<string>>(new Set()); // this is used when the api actions are performed
 
@@ -356,8 +357,8 @@ export function Organization() {
   };
 
   // Check if any filters are active
-  const hasActiveFilters = !!(filter.membershipRole || filter.status);
-  const activeFilterCount = [filter.membershipRole, filter.status].filter(Boolean).length;
+  const hasActiveFilters = !!(filter.membershipRole || filter.status || filter.organizationType);
+  const activeFilterCount = [filter.membershipRole, filter.status, filter.organizationType].filter(Boolean).length;
 
   // Clear all filters
   const clearFilters = () => {
@@ -365,6 +366,7 @@ export function Organization() {
       searchTerm: filter.searchTerm,
       membershipRole: "",
       status: "",
+      organizationType: "",
     });
   };
 
@@ -426,6 +428,92 @@ export function Organization() {
                     >
                       Clear all
                     </Button>
+                  </div>
+                )}
+
+                {/* Organization Type Filter - only show if preserve-structure strategy is active */}
+                {/* Organization Type Filter - only show if preserve-structure strategy is active */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <span className="text-muted-foreground">By</span> Type
+                    {filter.organizationType && (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {filter.organizationType === "joined" ? "Joined" : "Starred Owner"}
+                      </span>
+                    )}
+                  </label>
+                  <Select
+                    value={filter.organizationType || "all"}
+                    onValueChange={(value) =>
+                      setFilter((prev) => ({
+                        ...prev,
+                        organizationType: value === "all" ? "" : (value as "joined" | "starred-owner"),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="w-full h-10">
+                      <SelectValue placeholder="All types" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["all", "joined", "starred-owner"].map((type) => (
+                        <SelectItem key={type} value={type}>
+                          <span className="flex items-center gap-2">
+                            {type !== "all" && (
+                              <span className={`h-2 w-2 rounded-full ${
+                                type === "joined" ? "bg-blue-500" : "bg-amber-500"
+                              }`} />
+                            )}
+                            {type === "all"
+                              ? "All types"
+                              : type === "joined"
+                              ? "Joined"
+                              : "Starred Owner"}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <span className="text-muted-foreground">By</span> Type
+                      {filter.organizationType && (
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {filter.organizationType === "joined" ? "Joined" : "Starred Owner"}
+                        </span>
+                      )}
+                    </label>
+                    <Select
+                      value={filter.organizationType || "all"}
+                      onValueChange={(value) =>
+                        setFilter((prev) => ({
+                          ...prev,
+                          organizationType: value === "all" ? "" : (value as "joined" | "starred-owner"),
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["all", "joined", "starred-owner"].map((type) => (
+                          <SelectItem key={type} value={type}>
+                            <span className="flex items-center gap-2">
+                              {type !== "all" && (
+                                <span className={`h-2 w-2 rounded-full ${
+                                  type === "joined" ? "bg-blue-500" : "bg-amber-500"
+                                }`} />
+                              )}
+                              {type === "all"
+                                ? "All types"
+                                : type === "joined"
+                                ? "Joined"
+                                : "Starred Owner"}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
 
@@ -591,6 +679,40 @@ export function Organization() {
 
           {/* Filter controls */}
           <div className="flex items-center gap-2">
+            {/* Organization Type Filter - only show if preserve-structure strategy is active */}
+            {/* Organization Type Filter - only show if preserve-structure strategy is active */}
+            <Select
+              value={filter.organizationType || "all"}
+              onValueChange={(value) =>
+                setFilter((prev) => ({
+                  ...prev,
+                  organizationType: value === "all" ? "" : (value as "joined" | "starred-owner"),
+                }))
+              }
+            >
+              <SelectTrigger className="w-[140px] h-10">
+                <SelectValue placeholder="All types" />
+              </SelectTrigger>
+              <SelectContent>
+                {["all", "joined", "starred-owner"].map((type) => (
+                  <SelectItem key={type} value={type}>
+                    <span className="flex items-center gap-2">
+                      {type !== "all" && (
+                        <span className={`h-2 w-2 rounded-full ${
+                          type === "joined" ? "bg-blue-500" : "bg-amber-500"
+                        }`} />
+                      )}
+                      {type === "all"
+                        ? "All types"
+                        : type === "joined"
+                        ? "Joined"
+                        : "Starred Owner"}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
             {/* Membership Role Filter */}
             <Select
               value={filter.membershipRole || "all"}

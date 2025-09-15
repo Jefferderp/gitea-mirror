@@ -11,6 +11,8 @@ import { jsonResponse, createSecureErrorResponse } from "@/lib/utils";
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
   const userId = url.searchParams.get("userId");
+  const sourceOwner = url.searchParams.get("sourceOwner");
+  const organizationType = url.searchParams.get("organizationType") as "joined" | "starred-owner" | null;
 
   if (!userId) {
     return jsonResponse({
@@ -44,6 +46,30 @@ export const GET: APIRoute = async ({ request }) => {
 
     // Build query conditions based on config
     const conditions = [eq(repositories.userId, userId)];
+
+    // Filter by source owner (GitHub owner for starred repos)
+    if (sourceOwner) {
+      conditions.push(eq(repositories.organization, sourceOwner));
+    }
+
+    // Filter by organization type (requires joining with organizations table)
+    if (organizationType) {
+      const orgs = await db
+        .select({ name: organizations.name })
+        .from(organizations)
+        .where(and(
+          eq(organizations.userId, userId),
+          eq(organizations.organizationType, organizationType)
+        ));
+      
+      const orgNames = orgs.map(org => org.name);
+      if (orgNames.length > 0) {
+        conditions.push(sql`${repositories.organization} IN (${orgNames.join(',')})`);
+      } else {
+        // If no organizations of the specified type exist, return empty results
+        conditions.push(sql`1=0`);
+      }
+    }
 
     // Note: We show ALL repositories in the list
     // The mirrorStarred and privateRepositories flags only control what gets mirrored,

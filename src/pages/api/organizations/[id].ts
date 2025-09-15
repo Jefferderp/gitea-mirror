@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { db, organizations } from "@/lib/db";
+import { db, organizations, repositories } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { createSecureErrorResponse } from "@/lib/utils";
 import { requireAuth } from "@/lib/utils/auth-helpers";
@@ -37,6 +37,18 @@ export const PATCH: APIRoute = async (context) => {
       });
     }
 
+    // Handle starred-owner organization destination updates
+    if (existingOrg.organizationType === "starred-owner") {
+      console.log(`Updating destination for starred-owner organization: ${existingOrg.sourceOwner}`);
+      
+      // Update any repositories that belong to this starred organization
+      await updateStarredRepoDestinations({
+        userId,
+        sourceOwner: existingOrg.sourceOwner!,
+        newDestination: destinationOrg,
+      });
+    }
+
     // Update the organization's destination override
     await db
       .update(organizations)
@@ -49,8 +61,9 @@ export const PATCH: APIRoute = async (context) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: "Organization destination updated successfully",
+        message: `${existingOrg.organizationType === "starred-owner" ? "Starred-owner " : ""}Organization destination updated successfully`,
         destinationOrg: destinationOrg || null,
+        organizationType: existingOrg.organizationType, // Include org type in response
       }),
       {
         status: 200,
@@ -61,3 +74,29 @@ export const PATCH: APIRoute = async (context) => {
     return createSecureErrorResponse(error, "Update organization destination", 500);
   }
 };
+
+/**
+ * Update repository destinations when starred organization destination changes
+ */
+async function updateStarredRepoDestinations({
+  userId,
+  sourceOwner,
+  newDestination,
+}: {
+  userId: string;
+  sourceOwner: string;
+  newDestination: string | null;
+}): Promise<void> {
+  // Update all starred repositories from this source owner
+  await db
+    .update(repositories)
+    .set({
+      destinationOrg: newDestination,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(repositories.userId, userId),
+      eq(repositories.isStarred, true),
+      eq(repositories.organization, sourceOwner)
+    ));
+}

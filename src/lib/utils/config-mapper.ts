@@ -29,6 +29,7 @@ export function mapUiToDbConfig(
 ): { githubConfig: DbGitHubConfig; giteaConfig: DbGiteaConfig } {
   // Map GitHub config to match database schema fields
   const dbGithubConfig: DbGitHubConfig = {
+    starredReposStrategy: "single-organization",
     // Map username to owner field
     owner: githubConfig.username,
     type: "personal", // Default to personal, could be made configurable

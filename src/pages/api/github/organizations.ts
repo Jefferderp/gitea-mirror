@@ -13,6 +13,8 @@ import { jsonResponse, createSecureErrorResponse } from "@/lib/utils";
 export const GET: APIRoute = async ({ request }) => {
   const url = new URL(request.url);
   const userId = url.searchParams.get("userId");
+  const organizationType = url.searchParams.get("organizationType") as "all" | "joined" | "starred-owner" | null;
+  const sourceOwner = url.searchParams.get("sourceOwner");
 
   if (!userId) {
     return jsonResponse({
@@ -47,10 +49,23 @@ export const GET: APIRoute = async ({ request }) => {
       privateRepositories: boolean;
     };
 
+    // Build query conditions based on filters
+    const conditions = [eq(organizations.userId, userId)];
+
+    // Filter by organization type
+    if (organizationType && organizationType !== "all") {
+      conditions.push(eq(organizations.organizationType, organizationType));
+    }
+
+    // Filter by source owner (for starred-owner organizations)
+    if (sourceOwner) {
+      conditions.push(eq(organizations.sourceOwner, sourceOwner));
+    }
+
     const rawOrgs = await db
       .select()
       .from(organizations)
-      .where(eq(organizations.userId, userId))
+      .where(and(...conditions))
       .orderBy(sql`name COLLATE NOCASE`);
 
     // Calculate repository breakdowns for each organization
@@ -114,10 +129,16 @@ export const GET: APIRoute = async ({ request }) => {
       })
     );
 
+    // Calculate organization type counts
+    const joinedCount = orgsWithBreakdown.filter(org => org.organizationType === 'joined').length;
+    const starredOwnerCount = orgsWithBreakdown.filter(org => org.organizationType === 'starred-owner').length;
+
     const resPayload: OrganizationsApiResponse = {
       success: true,
       message: "Organizations fetched successfully",
       organizations: orgsWithBreakdown,
+      joinedCount,
+      starredOwnerCount,
     };
 
     return jsonResponse({ data: resPayload, status: 200 });

@@ -5,6 +5,7 @@ export interface FilterParams {
   searchTerm?: string;
   status?: RepoStatus | ""; // repos, activity   and orgs status
   membershipRole?: MembershipRole | ""; //membership role in orgs
+  organizationType?: "joined" | "starred-owner" | ""; // organization type filter
   owner?: string; // owner of the repos
   organization?: string; // organization of the repos
   type?: string; //types in activity log

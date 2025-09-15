@@ -250,6 +250,7 @@ export async function initializeConfigFromEnv(): Promise<void> {
       mirrorStrategy,
       defaultOrg: envConfig.gitea.organization || existingConfig?.[0]?.githubConfig?.defaultOrg || 'github-mirrors',
       skipStarredIssues: envConfig.github.skipStarredIssues ?? existingConfig?.[0]?.githubConfig?.skipStarredIssues ?? false,
+      starredReposStrategy: existingConfig?.[0]?.githubConfig?.starredReposStrategy || "single-organization",
     };
 
     // Build Gitea config

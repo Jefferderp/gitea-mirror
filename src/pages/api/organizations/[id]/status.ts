@@ -1,5 +1,5 @@
 import type { APIContext } from "astro";
-import { db, organizations } from "@/lib/db";
+import { db, organizations, repositories } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { createSecureErrorResponse } from "@/lib/utils";
 
@@ -65,6 +65,15 @@ export async function PATCH({ params, request }: APIContext) {
       );
     }
 
+    // Handle starred-owner organization status changes
+    if (updatedOrg.organizationType === "starred-owner") {
+      await handleStarredOrgStatusChange({
+        organization: updatedOrg,
+        newStatus: status,
+        userId,
+      });
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -77,5 +86,51 @@ export async function PATCH({ params, request }: APIContext) {
     );
   } catch (error) {
     return createSecureErrorResponse(error);
+  }
+}
+
+/**
+ * Handle status changes for starred-owner organizations
+ */
+async function handleStarredOrgStatusChange({
+  organization,
+  newStatus,
+  userId,
+}: {
+  organization: any;
+  newStatus: string;
+  userId: string;
+}): Promise<void> {
+  if (newStatus === "ignored") {
+    // Mark all starred repositories from this owner as ignored
+    await db
+      .update(repositories)
+      .set({
+        status: "ignored",
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(repositories.userId, userId),
+        eq(repositories.isStarred, true),
+        eq(repositories.organization, organization.sourceOwner)
+      ));
+    
+    console.log(`Marked all starred repos from ${organization.sourceOwner} as ignored`);
+  } else if (newStatus === "imported") {
+    // Re-enable starred repositories from this owner
+    await db
+      .update(repositories)
+      .set({
+        status: "imported",
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(repositories.userId, userId),
+        eq(repositories.isStarred, true),
+        eq(repositories.organization, organization.sourceOwner),
+        eq(repositories.status, "ignored")
+      ));
+    
+    console.log(`Re-enabled starred repos from ${organization.sourceOwner}`);
   }
 }

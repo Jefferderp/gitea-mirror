@@ -17,6 +17,7 @@ interface OrganizationConfigurationProps {
   starredReposOrg?: string;
   personalReposOrg?: string;
   visibility: GiteaOrgVisibility;
+  starredReposStrategy?: "single-organization" | "preserve-structure";
   onDestinationOrgChange: (org: string) => void;
   onStarredReposOrgChange: (org: string) => void;
   onPersonalReposOrgChange: (org: string) => void;
@@ -35,6 +36,7 @@ export const OrganizationConfiguration: React.FC<OrganizationConfigurationProps>
   starredReposOrg,
   personalReposOrg,
   visibility,
+  starredReposStrategy,
   onDestinationOrgChange,
   onStarredReposOrgChange,
   onPersonalReposOrgChange,
@@ -51,33 +53,35 @@ export const OrganizationConfiguration: React.FC<OrganizationConfigurationProps>
 
       {/* First row - Organization inputs with consistent layout */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Left column - always shows starred repos org */}
-        <div className="space-y-1">
-          <Label htmlFor="starredReposOrg" className="text-sm font-normal flex items-center gap-2">
-            <Star className="h-3.5 w-3.5" />
-            Starred Repos Organization
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger>
-                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Starred repositories will be organized separately in this organization</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </Label>
-          <Input
-            id="starredReposOrg"
-            value={starredReposOrg || ""}
-            onChange={(e) => onStarredReposOrgChange(e.target.value)}
-            placeholder="starred"
-            className=""
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Keep starred repos organized separately
-          </p>
-        </div>
+        {/* Left column - shows starred repos org only for single-organization strategy */}
+        {(starredReposStrategy === "single-organization" || !starredReposStrategy) && (
+          <div className="space-y-1">
+            <Label htmlFor="starredReposOrg" className="text-sm font-normal flex items-center gap-2">
+              <Star className="h-3.5 w-3.5" />
+              Starred Repos Organization
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Starred repositories will be organized separately in this organization</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </Label>
+            <Input
+              id="starredReposOrg"
+              value={starredReposOrg || ""}
+              onChange={(e) => onStarredReposOrgChange(e.target.value)}
+              placeholder="starred"
+              className=""
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Keep starred repos organized separately
+            </p>
+          </div>
+        )}
 
         {/* Right column - shows destination org for single-org/mixed, personal repos org for preserve, empty div for others */}
         {strategy === "single-org" || strategy === "mixed" ? (

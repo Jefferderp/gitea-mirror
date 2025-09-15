@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, RefreshCw, Building2, Check, AlertCircle, Clock, MoreVertical, Ban } from "lucide-react";
+import { Plus, RefreshCw, Building2, Check, AlertCircle, Clock, MoreVertical, Ban, Star } from "lucide-react";
 import { SiGithub, SiGitea } from "react-icons/si";
 import type { Organization } from "@/lib/db/schema";
 import type { FilterParams } from "@/types/filter";
@@ -62,6 +62,9 @@ export function OrganizationList({
   onRefresh,
 }: OrganizationListProps) {
   const { giteaConfig } = useGiteaConfig();
+  
+  // Always show star visual distinctions for starred-owner organizations
+  // This provides visual feedback regardless of strategy, maintaining consistency
 
   // Helper function to construct Gitea organization URL
   const getGiteaOrgUrl = (organization: Organization): string | null => {
@@ -127,6 +130,10 @@ export function OrganizationList({
       result = result.filter((org) => org.status === filter.status);
     }
 
+    if (filter.organizationType) {
+      result = result.filter((org) => org.organizationType === filter.organizationType);
+    }
+
     if (filter.searchTerm) {
       const fuse = new Fuse(result, {
         keys: ["name", "type"],
@@ -178,13 +185,16 @@ export function OrganizationList({
         const isLoading = loadingOrgIds.has(org.id ?? "");
         const statusBadge = getStatusBadge(org.status);
         const StatusIcon = statusBadge.icon;
+        const isStarredOwner = org.organizationType === "starred-owner";
+        const shouldShowStarredVisuals = isStarredOwner;
 
         return (
-          <Card 
-            key={index} 
+          <Card
+            key={index}
             className={cn(
               "overflow-hidden p-4 sm:p-6 transition-all hover:shadow-lg hover:border-foreground/10 w-full",
-              isLoading && "opacity-75"
+              isLoading && "opacity-75",
+              shouldShowStarredVisuals && "border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20"
             )}
           >
             {/* Mobile Layout */}
@@ -194,12 +204,18 @@ export function OrganizationList({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <Building2 className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-                    <a 
+                    <a
                       href={`/repositories?organization=${encodeURIComponent(org.name || '')}`}
                       className="font-medium hover:underline cursor-pointer truncate"
                     >
                       {org.name}
                     </a>
+                    {shouldShowStarredVisuals && (
+                      <Badge variant="amber" className="flex-shrink-0">
+                        <Star className="h-3 w-3 mr-1" />
+                        Starred Owner
+                      </Badge>
+                    )}
                   </div>
                   <Badge variant={statusBadge.variant} className="flex-shrink-0">
                     {StatusIcon && <StatusIcon className={cn(
@@ -264,18 +280,24 @@ export function OrganizationList({
                 <div className="flex items-start gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-1">
-                      <a 
+                      <a
                         href={`/repositories?organization=${encodeURIComponent(org.name || '')}`}
                         className="text-xl font-semibold hover:underline cursor-pointer"
                       >
                         {org.name}
                       </a>
-                      <Badge 
+                      <Badge
                         variant={org.membershipRole === "member" ? "secondary" : "default"}
                         className="capitalize"
                       >
                         {org.membershipRole}
                       </Badge>
+                      {shouldShowStarredVisuals && (
+                        <Badge variant="amber" className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-700">
+                          <Star className="h-3 w-3 mr-1" />
+                          Starred Owner
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 </div>

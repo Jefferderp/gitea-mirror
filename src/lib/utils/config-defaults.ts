@@ -108,7 +108,13 @@ export async function createDefaultConfig({ userId, envOverrides = {} }: Default
   };
 
   // Insert the default config
-  await db.insert(configs).values(defaultConfig);
+  await db.insert(configs).values({
+    ...defaultConfig,
+    githubConfig: {
+      ...defaultConfig.githubConfig,
+      starredReposStrategy: "single-organization",
+    },
+  });
 
   return defaultConfig;
 }

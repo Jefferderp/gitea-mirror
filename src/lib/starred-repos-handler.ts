@@ -91,15 +91,29 @@ async function preCreateOrganizations({
 }): Promise<void> {
   // Get unique organization names
   const orgNames = new Set<string>();
+  const sourceOwners = new Map<string, string>();
   
-  // Add starred repos org
-  if (config.githubConfig?.starredReposOrg) {
-    orgNames.add(config.githubConfig.starredReposOrg);
+  const strategy = config.githubConfig?.starredReposStrategy || "single-organization";
+  
+  if (strategy === "preserve-structure") {
+    // For preserve-structure strategy, create organizations for each GitHub owner
+    for (const repo of repositories) {
+      if (repo.isStarred) {
+        const githubOwner = repo.fullName.split("/")[0];
+        orgNames.add(githubOwner);
+        sourceOwners.set(githubOwner, githubOwner);
+      }
+    }
   } else {
-    orgNames.add("starred");
+    // For single-organization strategy, use the configured starred organization
+    if (config.githubConfig?.starredReposOrg) {
+      orgNames.add(config.githubConfig.starredReposOrg);
+    } else {
+      orgNames.add("starred");
+    }
   }
 
-  // Add any other organizations based on mirror strategy
+  // Add any other organizations based on destination overrides
   for (const repo of repositories) {
     if (repo.destinationOrg) {
       orgNames.add(repo.destinationOrg);
@@ -108,11 +122,21 @@ async function preCreateOrganizations({
 
   console.log(`Pre-creating ${orgNames.size} organizations sequentially`);
 
-  // Create organizations sequentially
-  await createOrganizationsSequentially({
-    config,
-    orgNames: Array.from(orgNames),
-  });
+  // Create organizations sequentially with proper metadata
+  if (strategy === "preserve-structure") {
+    await createOrganizationsSequentially({
+      config,
+      orgNames: Array.from(orgNames),
+      organizationType: "starred-owner",
+      sourceOwners,
+    });
+  } else {
+    await createOrganizationsSequentially({
+      config,
+      orgNames: Array.from(orgNames),
+      organizationType: "joined",
+    });
+  }
 }
 
 /**
@@ -129,12 +153,22 @@ async function processStarredRepository({
   octokit: Octokit;
   strategyConfig: ReturnType<typeof getMirrorStrategyConfig>;
 }): Promise<void> {
-  const starredOrg = config.githubConfig?.starredReposOrg || "starred";
+  // Determine the target organization based on strategy
+  const strategy = config.githubConfig?.starredReposStrategy || "single-organization";
+  let targetOrg: string;
+  
+  if (strategy === "preserve-structure") {
+    // For preserve-structure strategy, use GitHub owner as organization
+    targetOrg = repository.fullName.split("/")[0];
+  } else {
+    // For single-organization strategy, use the configured starred organization
+    targetOrg = config.githubConfig?.starredReposOrg || "starred";
+  }
   
   // Check if repository exists in Gitea
   const existingRepo = await getGiteaRepoInfo({
     config,
-    owner: starredOrg,
+    owner: targetOrg,
     repoName: repository.name,
   });
 
@@ -145,7 +179,7 @@ async function processStarredRepository({
       // Update database status
       const { db, repositories: reposTable } = await import("./db");
       const { eq } = await import("drizzle-orm");
-      const { repoStatusEnum } = await import("@/types/Repository");
+      const { repoStatusEnum } = await import("./db/schema");
       
       await db
         .update(reposTable)
@@ -154,7 +188,7 @@ async function processStarredRepository({
           updatedAt: new Date(),
           lastMirrored: new Date(),
           errorMessage: null,
-          mirroredLocation: `${starredOrg}/${repository.name}`,
+          mirroredLocation: `${targetOrg}/${repository.name}`,
         })
         .where(eq(reposTable.id, repository.id!));
       
@@ -196,7 +230,7 @@ async function processStarredRepository({
         // Check if it's a mirror now
         const recheck = await getGiteaRepoInfo({
           config,
-          owner: starredOrg,
+          owner: targetOrg,
           repoName: repository.name,
         });
         
@@ -204,7 +238,7 @@ async function processStarredRepository({
           // It's now a mirror, update database
           const { db, repositories: reposTable } = await import("./db");
           const { eq } = await import("drizzle-orm");
-          const { repoStatusEnum } = await import("@/types/Repository");
+          const { repoStatusEnum } = await import("./db/schema");
           
           await db
             .update(reposTable)
@@ -213,7 +247,7 @@ async function processStarredRepository({
               updatedAt: new Date(),
               lastMirrored: new Date(),
               errorMessage: null,
-              mirroredLocation: `${starredOrg}/${repository.name}`,
+              mirroredLocation: `${targetOrg}/${repository.name}`,
             })
             .where(eq(reposTable.id, repository.id!));
           
@@ -257,10 +291,21 @@ export async function syncStarredRepositories({
         if (error instanceof Error && error.message.includes("not a mirror")) {
           console.warn(`Repository ${repository.name} is not a mirror, handling...`);
           
-          const starredOrg = config.githubConfig?.starredReposOrg || "starred";
+          // Determine the target organization based on strategy
+          const strategy = config.githubConfig?.starredReposStrategy || "single-organization";
+          let targetOrg: string;
+          
+          if (strategy === "preserve-structure") {
+            // For preserve-structure strategy, use GitHub owner as organization
+            targetOrg = repository.fullName.split("/")[0];
+          } else {
+            // For single-organization strategy, use the configured starred organization
+            targetOrg = config.githubConfig?.starredReposOrg || "starred";
+          }
+          
           const repoInfo = await getGiteaRepoInfo({
             config,
-            owner: starredOrg,
+            owner: targetOrg,
             repoName: repository.name,
           });
           

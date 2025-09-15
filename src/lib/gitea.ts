@@ -2,10 +2,10 @@ import {
   repoStatusEnum,
   type RepositoryVisibility,
   type RepoStatus,
-} from "@/types/Repository";
-import { membershipRoleEnum } from "@/types/organizations";
+} from "./db/schema";
+import { membershipRoleEnum } from "./db/schema";
 import { Octokit } from "@octokit/rest";
-import type { Config } from "@/types/config";
+import type { Config } from "./db/schema";
 import type { Organization, Repository } from "./db/schema";
 import { httpPost, httpGet, httpDelete, httpPut, httpPatch } from "./http-client";
 import { createMirrorJob } from "./helpers";
@@ -72,9 +72,30 @@ export const getGiteaRepoOwnerAsync = async ({
     throw new Error("User ID is required for organization overrides.");
   }
 
-  // Check if repository is starred - starred repos always go to starredReposOrg (highest priority)
+  // Check if repository is starred - handle both strategies
   if (repository.isStarred) {
-    return config.githubConfig.starredReposOrg || "starred";
+    const strategy = config.githubConfig.starredReposStrategy || "single-organization";
+    
+    if (strategy === "preserve-structure") {
+      // For preserve-structure strategy, use GitHub owner as organization name
+      const githubOwner = repository.fullName.split("/")[0];
+      
+      // Check for organization-specific override
+      const orgConfig = await getOrganizationConfig({
+        orgName: githubOwner,
+        userId: config.userId,
+      });
+      
+      if (orgConfig?.destinationOrg) {
+        console.log(`Using organization override for starred repo: ${githubOwner} -> ${orgConfig.destinationOrg}`);
+        return orgConfig.destinationOrg;
+      }
+      
+      return githubOwner;
+    } else {
+      // For single-organization strategy, use the configured starred organization
+      return config.githubConfig.starredReposOrg || "starred";
+    }
   }
 
   // Check for repository-specific override (second highest priority)
