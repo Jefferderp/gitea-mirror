@@ -13,7 +13,7 @@ import { decryptConfigTokens } from "./utils/config-encryption";
 import { httpPost, httpGet, httpPatch, HttpError } from "./http-client";
 import { db, repositories, organizations } from "./db";
 import { eq } from "drizzle-orm";
-import { repoStatusEnum } from "./db/schema";
+import { repoStatusEnum } from "@/types/Repository";
 
 /**
  * Enhanced repository information including mirror status

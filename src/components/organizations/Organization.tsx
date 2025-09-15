@@ -474,48 +474,6 @@ export function Organization() {
                     </SelectContent>
                   </Select>
                 </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium flex items-center gap-2">
-                      <span className="text-muted-foreground">By</span> Type
-                      {filter.organizationType && (
-                        <span className="ml-auto text-xs text-muted-foreground">
-                          {filter.organizationType === "joined" ? "Joined" : "Starred Owner"}
-                        </span>
-                      )}
-                    </label>
-                    <Select
-                      value={filter.organizationType || "all"}
-                      onValueChange={(value) =>
-                        setFilter((prev) => ({
-                          ...prev,
-                          organizationType: value === "all" ? "" : (value as "joined" | "starred-owner"),
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="w-full h-10">
-                        <SelectValue placeholder="All types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {["all", "joined", "starred-owner"].map((type) => (
-                          <SelectItem key={type} value={type}>
-                            <span className="flex items-center gap-2">
-                              {type !== "all" && (
-                                <span className={`h-2 w-2 rounded-full ${
-                                  type === "joined" ? "bg-blue-500" : "bg-amber-500"
-                                }`} />
-                              )}
-                              {type === "all"
-                                ? "All types"
-                                : type === "joined"
-                                ? "Joined"
-                                : "Starred Owner"}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
 
                 {/* Role Filter */}
                 <div className="space-y-2">

@@ -1,9 +1,9 @@
 import {
-  repoStatusEnum,
   type RepositoryVisibility,
   type RepoStatus,
+  type Organization,
 } from "./db/schema";
-import { membershipRoleEnum } from "./db/schema";
+import { repoStatusEnum } from "@/types/Repository";
 import { Octokit } from "@octokit/rest";
 import type { Config } from "./db/schema";
 import type { Organization, Repository } from "./db/schema";
@@ -36,12 +36,10 @@ export const getOrganizationConfig = async ({
 
     // Validate and cast the membershipRole to ensure type safety
     const rawOrg = result[0];
-    const membershipRole = membershipRoleEnum.parse(rawOrg.membershipRole);
     const status = repoStatusEnum.parse(rawOrg.status);
 
     return {
       ...rawOrg,
-      membershipRole,
       status,
     } as Organization;
   } catch (error) {
