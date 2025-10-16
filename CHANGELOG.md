@@ -58,6 +58,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated README with new features
   - Enhanced CLAUDE.md with repository status definitions
 
+## [3.7.1] - 2025-09-14
+
+### Fixed
+- Cleanup archiving for mirror repositories now works reliably (refs #84; awaiting user confirmation).
+  - Gitea rejects names violating the AlphaDashDot rule; archiving a mirror now uses a sanitized rename strategy (`archived-<name>`), with a timestamped fallback on conflicts or validation errors.
+  - Owner resolution during cleanup no longer uses the GitHub owner by mistake. It prefers `mirroredLocation`, falls back to computed Gitea owner via configuration, and verifies location with a presence check to avoid `GetUserByName` 404s.
+- Repositories UI crash resolved when cleanup marked repos as archived.
+  - Added `"archived"` to repository/job status enums, fixing Zod validation errors on the Repositories page.
+
+### Changed
+- Archiving logic for mirror repos is non-destructive by design: data is preserved, repo is renamed with an archive marker, and mirror interval is reduced (best‑effort) to minimize sync attempts.
+- Cleanup service updates DB to `status: "archived"` and `isArchived: true` on successful archive path.
+
+### Notes
+- This release addresses the scenario where a GitHub source disappears (deleted/banned), ensuring Gitea backups are preserved even when using `CLEANUP_DELETE_IF_NOT_IN_GITHUB=true` with `CLEANUP_ORPHANED_REPO_ACTION=archive`.
+- No database migration required.
+
 ## [3.2.6] - 2025-08-09
 
 ### Fixed

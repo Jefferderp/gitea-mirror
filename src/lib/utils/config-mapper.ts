@@ -11,6 +11,7 @@ import type {
 } from "@/types/config";
 import { z } from "zod";
 import { githubConfigSchema, giteaConfigSchema, scheduleConfigSchema, cleanupConfigSchema } from "@/lib/db/schema";
+import { parseInterval } from "@/lib/utils/duration-parser";
 
 // Use the actual database schema types
 type DbGitHubConfig = z.infer<typeof githubConfigSchema>;
@@ -55,7 +56,7 @@ export function mapUiToDbConfig(
     defaultOrg: giteaConfig.organization,
     
     // Advanced options
-    skipStarredIssues: advancedOptions.skipStarredIssues,
+    starredCodeOnly: advancedOptions.starredCodeOnly,
   };
 
   // Map Gitea config to match database schema
@@ -155,7 +156,8 @@ export function mapDbToUiConfig(dbConfig: any): {
   // Map advanced options
   const advancedOptions: AdvancedOptions = {
     skipForks: !(dbConfig.githubConfig?.includeForks ?? true), // Invert includeForks to get skipForks
-    skipStarredIssues: dbConfig.githubConfig?.skipStarredIssues || false,
+    // Support both old (skipStarredIssues) and new (starredCodeOnly) field names for backward compatibility
+    starredCodeOnly: dbConfig.githubConfig?.starredCodeOnly ?? (dbConfig.githubConfig as any)?.skipStarredIssues ?? false,
   };
 
   return {
@@ -169,27 +171,22 @@ export function mapDbToUiConfig(dbConfig: any): {
 /**
  * Maps UI schedule config to database schema
  */
-export function mapUiScheduleToDb(uiSchedule: any): DbScheduleConfig {
+export function mapUiScheduleToDb(uiSchedule: any, existing?: DbScheduleConfig): DbScheduleConfig {
+  // Preserve existing schedule config and only update fields controlled by the UI
+  const base: DbScheduleConfig = existing
+    ? { ...(existing as unknown as DbScheduleConfig) }
+    : (scheduleConfigSchema.parse({}) as unknown as DbScheduleConfig);
+
+  // Store interval as seconds string to avoid lossy cron conversion
+  const intervalSeconds = typeof uiSchedule.interval === 'number' && uiSchedule.interval > 0
+    ? String(uiSchedule.interval)
+    : (typeof base.interval === 'string' ? base.interval : String(86400));
+
   return {
-    enabled: uiSchedule.enabled || false,
-    interval: uiSchedule.interval ? `0 */${Math.floor(uiSchedule.interval / 3600)} * * *` : "0 2 * * *", // Convert seconds to cron expression
-    concurrent: false,
-    batchSize: 10,
-    pauseBetweenBatches: 5000,
-    retryAttempts: 3,
-    retryDelay: 60000,
-    timeout: 3600000,
-    autoRetry: true,
-    cleanupBeforeMirror: false,
-    notifyOnFailure: true,
-    notifyOnSuccess: false,
-    logLevel: "info",
-    timezone: "UTC",
-    onlyMirrorUpdated: false,
-    updateInterval: 86400000,
-    skipRecentlyMirrored: true,
-    recentThreshold: 3600000,
-  };
+    ...base,
+    enabled: !!uiSchedule.enabled,
+    interval: intervalSeconds,
+  } as DbScheduleConfig;
 }
 
 /**
@@ -206,23 +203,18 @@ export function mapDbScheduleToUi(dbSchedule: DbScheduleConfig): any {
     };
   }
 
-  // Extract hours from cron expression if possible
+  // Parse interval supporting numbers (seconds), duration strings, and cron
   let intervalSeconds = 86400; // Default to daily (24 hours)
-  
-  if (dbSchedule.interval) {
-    // Check if it's already a number (seconds), use it directly
-    if (typeof dbSchedule.interval === 'number') {
-      intervalSeconds = dbSchedule.interval;
-    } else if (typeof dbSchedule.interval === 'string') {
-      // Check if it's a cron expression
-      const cronMatch = dbSchedule.interval.match(/0 \*\/(\d+) \* \* \*/);
-      if (cronMatch) {
-        intervalSeconds = parseInt(cronMatch[1]) * 3600;
-      } else if (dbSchedule.interval === "0 2 * * *") {
-        // Daily at 2 AM
-        intervalSeconds = 86400;
-      }
-    }
+  try {
+    const ms = parseInterval(
+      typeof dbSchedule.interval === 'number'
+        ? dbSchedule.interval
+        : (dbSchedule.interval as unknown as string)
+    );
+    intervalSeconds = Math.max(1, Math.floor(ms / 1000));
+  } catch (_e) {
+    // Fallback to default if unparsable
+    intervalSeconds = 86400;
   }
 
   return {

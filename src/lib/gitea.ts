@@ -375,21 +375,8 @@ export const mirrorGithubRepoToGitea = async ({
       status: "mirroring",
     });
 
-    let cloneAddress = repository.cloneUrl;
-
-    // If the repository is private, inject the GitHub token into the clone URL
-    if (repository.isPrivate) {
-      if (!config.githubConfig.token) {
-        throw new Error(
-          "GitHub token is required to mirror private repositories."
-        );
-      }
-
-      cloneAddress = repository.cloneUrl.replace(
-        "https://",
-        `https://${decryptedConfig.githubConfig.token}@`
-      );
-    }
+    // Use clean clone URL without embedded credentials (Forgejo 12+ security requirement)
+    const cloneAddress = repository.cloneUrl;
 
     const apiUrl = `${config.giteaConfig.url}/api/v1/repos/migrate`;
 
@@ -403,17 +390,17 @@ export const mirrorGithubRepoToGitea = async ({
         });
       } catch (orgError) {
         console.error(`Failed to create/access organization ${repoOwner}: ${orgError instanceof Error ? orgError.message : String(orgError)}`);
-        
+
         // Check if we should fallback to user account
-        if (orgError instanceof Error && 
-            (orgError.message.includes('Permission denied') || 
+        if (orgError instanceof Error &&
+            (orgError.message.includes('Permission denied') ||
              orgError.message.includes('Authentication failed') ||
              orgError.message.includes('does not have permission'))) {
           console.warn(`[Fallback] Organization creation/access failed. Attempting to mirror to user account instead.`);
-          
+
           // Update the repository owner to use the user account
           repoOwner = config.giteaConfig.defaultOwner;
-          
+
           // Log this fallback in the database
           await db
             .update(repositories)
@@ -439,7 +426,7 @@ export const mirrorGithubRepoToGitea = async ({
 
     if (existingRepo && !existingRepo.mirror) {
       console.log(`Repository ${targetRepoName} exists but is not a mirror. Handling...`);
-      
+
       // Handle the existing non-mirror repository
       await handleExistingNonMirrorRepo({
         config,
@@ -447,33 +434,59 @@ export const mirrorGithubRepoToGitea = async ({
         repoInfo: existingRepo,
         strategy: "delete", // Can be configured: "skip", "delete", or "rename"
       });
-      
+
       // After handling, proceed with mirror creation
       console.log(`Proceeding with mirror creation for ${targetRepoName}`);
     }
 
+    // Prepare migration payload
+    // For private repos, use separate auth fields instead of embedding credentials in URL
+    // This is required for Forgejo 12+ which rejects URLs with embedded credentials
+    // Skip wiki for starred repos if starredCodeOnly is enabled
+    const shouldMirrorWiki = config.giteaConfig?.wiki &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    const migratePayload: any = {
+      clone_addr: cloneAddress,
+      repo_name: targetRepoName,
+      mirror: true,
+      mirror_interval: config.giteaConfig?.mirrorInterval || "8h",
+      wiki: shouldMirrorWiki || false,
+      lfs: config.giteaConfig?.lfs || false,
+      private: repository.isPrivate,
+      repo_owner: repoOwner,
+      description: "",
+      service: "git",
+    };
+
+    // Add authentication for private repositories
+    if (repository.isPrivate) {
+      if (!config.githubConfig.token) {
+        throw new Error(
+          "GitHub token is required to mirror private repositories."
+        );
+      }
+      // Use separate auth fields (required for Forgejo 12+ compatibility)
+      migratePayload.auth_username = "oauth2"; // GitHub tokens work with any username
+      migratePayload.auth_token = decryptedConfig.githubConfig.token;
+    }
+
     const response = await httpPost(
       apiUrl,
-      {
-        clone_addr: cloneAddress,
-        repo_name: targetRepoName,
-        mirror: true,
-        mirror_interval: config.giteaConfig?.mirrorInterval || "8h", // Set mirror interval
-        wiki: config.giteaConfig?.wiki || false, // will mirror wiki if it exists
-        lfs: config.giteaConfig?.lfs || false, // Enable LFS mirroring if configured
-        private: repository.isPrivate,
-        repo_owner: repoOwner,
-        description: "",
-        service: "git",
-      },
+      migratePayload,
       {
         Authorization: `token ${decryptedConfig.giteaConfig.token}`,
       }
     );
 
     //mirror releases
-    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}`);
-    if (config.giteaConfig?.mirrorReleases) {
+    // Skip releases for starred repos if starredCodeOnly is enabled
+    const shouldMirrorReleases = config.giteaConfig?.mirrorReleases &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`);
+
+    if (shouldMirrorReleases) {
       try {
         await mirrorGitHubReleasesToGitea({
           config,
@@ -490,11 +503,11 @@ export const mirrorGithubRepoToGitea = async ({
     }
 
     // clone issues
-    // Skip issues for starred repos if skipStarredIssues is enabled
+    // Skip issues for starred repos if starredCodeOnly is enabled
     const shouldMirrorIssues = config.giteaConfig?.mirrorIssues && 
-      !(repository.isStarred && config.githubConfig?.skipStarredIssues);
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
     
-    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, skipStarredIssues=${config.githubConfig?.skipStarredIssues}, shouldMirrorIssues=${shouldMirrorIssues}`);
+    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssues}`);
     
     if (shouldMirrorIssues) {
       try {
@@ -513,8 +526,13 @@ export const mirrorGithubRepoToGitea = async ({
     }
 
     // Mirror pull requests if enabled
-    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}`);
-    if (config.giteaConfig?.mirrorPullRequests) {
+    // Skip pull requests for starred repos if starredCodeOnly is enabled
+    const shouldMirrorPullRequests = config.giteaConfig?.mirrorPullRequests &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`);
+
+    if (shouldMirrorPullRequests) {
       try {
         await mirrorGitRepoPullRequestsToGitea({
           config,
@@ -531,8 +549,13 @@ export const mirrorGithubRepoToGitea = async ({
     }
 
     // Mirror labels if enabled (and not already done via issues)
-    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}`);
-    if (config.giteaConfig?.mirrorLabels && !shouldMirrorIssues) {
+    // Skip labels for starred repos if starredCodeOnly is enabled
+    const shouldMirrorLabels = config.giteaConfig?.mirrorLabels && !shouldMirrorIssues &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`);
+
+    if (shouldMirrorLabels) {
       try {
         await mirrorGitRepoLabelsToGitea({
           config,
@@ -549,8 +572,13 @@ export const mirrorGithubRepoToGitea = async ({
     }
 
     // Mirror milestones if enabled
-    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}`);
-    if (config.giteaConfig?.mirrorMilestones) {
+    // Skip milestones for starred repos if starredCodeOnly is enabled
+    const shouldMirrorMilestones = config.giteaConfig?.mirrorMilestones &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`);
+
+    if (shouldMirrorMilestones) {
       try {
         await mirrorGitRepoMilestonesToGitea({
           config,
@@ -819,20 +847,8 @@ export async function mirrorGitHubRepoToGiteaOrg({
       `Mirroring repository ${repository.fullName} to organization ${orgName} as ${targetRepoName}`
     );
 
-    let cloneAddress = repository.cloneUrl;
-
-    if (repository.isPrivate) {
-      if (!config.githubConfig?.token) {
-        throw new Error(
-          "GitHub token is required to mirror private repositories."
-        );
-      }
-
-      cloneAddress = repository.cloneUrl.replace(
-        "https://",
-        `https://${decryptedConfig.githubConfig.token}@`
-      );
-    }
+    // Use clean clone URL without embedded credentials (Forgejo 12+ security requirement)
+    const cloneAddress = repository.cloneUrl;
 
     // Mark repos as "mirroring" in DB
     await db
@@ -848,26 +864,52 @@ export async function mirrorGitHubRepoToGiteaOrg({
 
     const apiUrl = `${config.giteaConfig.url}/api/v1/repos/migrate`;
 
+    // Prepare migration payload
+    // For private repos, use separate auth fields instead of embedding credentials in URL
+    // This is required for Forgejo 12+ which rejects URLs with embedded credentials
+    // Skip wiki for starred repos if starredCodeOnly is enabled
+    const shouldMirrorWiki = config.giteaConfig?.wiki &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    const migratePayload: any = {
+      clone_addr: cloneAddress,
+      uid: giteaOrgId,
+      repo_name: targetRepoName,
+      mirror: true,
+      mirror_interval: config.giteaConfig?.mirrorInterval || "8h",
+      wiki: shouldMirrorWiki || false,
+      lfs: config.giteaConfig?.lfs || false,
+      private: repository.isPrivate,
+    };
+
+    // Add authentication for private repositories
+    if (repository.isPrivate) {
+      if (!config.githubConfig?.token) {
+        throw new Error(
+          "GitHub token is required to mirror private repositories."
+        );
+      }
+      // Use separate auth fields (required for Forgejo 12+ compatibility)
+      migratePayload.auth_username = "oauth2"; // GitHub tokens work with any username
+      migratePayload.auth_token = decryptedConfig.githubConfig.token;
+    }
+
     const migrateRes = await httpPost(
       apiUrl,
-      {
-        clone_addr: cloneAddress,
-        uid: giteaOrgId,
-        repo_name: targetRepoName,
-        mirror: true,
-        mirror_interval: config.giteaConfig?.mirrorInterval || "8h", // Set mirror interval
-        wiki: config.giteaConfig?.wiki || false, // will mirror wiki if it exists
-        lfs: config.giteaConfig?.lfs || false, // Enable LFS mirroring if configured
-        private: repository.isPrivate,
-      },
+      migratePayload,
       {
         Authorization: `token ${decryptedConfig.giteaConfig.token}`,
       }
     );
 
     //mirror releases
-    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}`);
-    if (config.giteaConfig?.mirrorReleases) {
+    // Skip releases for starred repos if starredCodeOnly is enabled
+    const shouldMirrorReleases = config.giteaConfig?.mirrorReleases &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`);
+
+    if (shouldMirrorReleases) {
       try {
         await mirrorGitHubReleasesToGitea({
           config,
@@ -884,11 +926,11 @@ export async function mirrorGitHubRepoToGiteaOrg({
     }
 
     // Clone issues
-    // Skip issues for starred repos if skipStarredIssues is enabled
+    // Skip issues for starred repos if starredCodeOnly is enabled
     const shouldMirrorIssues = config.giteaConfig?.mirrorIssues && 
-      !(repository.isStarred && config.githubConfig?.skipStarredIssues);
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
     
-    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, skipStarredIssues=${config.githubConfig?.skipStarredIssues}, shouldMirrorIssues=${shouldMirrorIssues}`);
+    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssues}`);
     
     if (shouldMirrorIssues) {
       try {
@@ -907,8 +949,13 @@ export async function mirrorGitHubRepoToGiteaOrg({
     }
 
     // Mirror pull requests if enabled
-    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}`);
-    if (config.giteaConfig?.mirrorPullRequests) {
+    // Skip pull requests for starred repos if starredCodeOnly is enabled
+    const shouldMirrorPullRequests = config.giteaConfig?.mirrorPullRequests &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`);
+
+    if (shouldMirrorPullRequests) {
       try {
         await mirrorGitRepoPullRequestsToGitea({
           config,
@@ -925,8 +972,13 @@ export async function mirrorGitHubRepoToGiteaOrg({
     }
 
     // Mirror labels if enabled (and not already done via issues)
-    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}`);
-    if (config.giteaConfig?.mirrorLabels && !shouldMirrorIssues) {
+    // Skip labels for starred repos if starredCodeOnly is enabled
+    const shouldMirrorLabels = config.giteaConfig?.mirrorLabels && !shouldMirrorIssues &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`);
+
+    if (shouldMirrorLabels) {
       try {
         await mirrorGitRepoLabelsToGitea({
           config,
@@ -943,8 +995,13 @@ export async function mirrorGitHubRepoToGiteaOrg({
     }
 
     // Mirror milestones if enabled
-    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}`);
-    if (config.giteaConfig?.mirrorMilestones) {
+    // Skip milestones for starred repos if starredCodeOnly is enabled
+    const shouldMirrorMilestones = config.giteaConfig?.mirrorMilestones &&
+      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+
+    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`);
+
+    if (shouldMirrorMilestones) {
       try {
         await mirrorGitRepoMilestonesToGitea({
           config,
@@ -2195,6 +2252,14 @@ export async function archiveGiteaRepo(
   repo: string
 ): Promise<void> {
   try {
+    // Helper: sanitize to Gitea's AlphaDashDot rule
+    const sanitizeRepoNameAlphaDashDot = (name: string): string => {
+      // Replace anything that's not [A-Za-z0-9.-] with '-'
+      const base = name.replace(/[^A-Za-z0-9.-]+/g, "-").replace(/-+/g, "-");
+      // Trim leading/trailing separators and dots for safety
+      return base.replace(/^[.-]+/, "").replace(/[.-]+$/, "");
+    };
+
     // First, check if this is a mirror repository
     const repoResponse = await httpGet(
       `${client.url}/api/v1/repos/${owner}/${repo}`,
@@ -2226,7 +2291,8 @@ export async function archiveGiteaRepo(
         return;
       }
       
-      const archivedName = `[ARCHIVED] ${currentName}`;
+      // Use a safe prefix and sanitize the name to satisfy AlphaDashDot rule
+      let archivedName = `archived-${sanitizeRepoNameAlphaDashDot(currentName)}`;
       const currentDesc = repoResponse.data.description || '';
       const archiveNotice = `\n\n⚠️ ARCHIVED: Original GitHub repository no longer exists. Preserved as backup on ${new Date().toISOString()}`;
       
@@ -2235,23 +2301,40 @@ export async function archiveGiteaRepo(
         ? currentDesc 
         : currentDesc + archiveNotice;
       
-      const renameResponse = await httpPatch(
-        `${client.url}/api/v1/repos/${owner}/${repo}`,
-        {
-          name: archivedName,
-          description: newDescription,
-        },
-        {
-          Authorization: `token ${client.token}`,
-          'Content-Type': 'application/json',
+      try {
+        await httpPatch(
+          `${client.url}/api/v1/repos/${owner}/${repo}`,
+          {
+            name: archivedName,
+            description: newDescription,
+          },
+          {
+            Authorization: `token ${client.token}`,
+            'Content-Type': 'application/json',
+          }
+        );
+      } catch (e: any) {
+        // If rename fails (e.g., 422 AlphaDashDot or name conflict), attempt a timestamped fallback
+        const ts = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14);
+        archivedName = `archived-${ts}-${sanitizeRepoNameAlphaDashDot(currentName)}`;
+        try {
+          await httpPatch(
+            `${client.url}/api/v1/repos/${owner}/${repo}`,
+            {
+              name: archivedName,
+              description: newDescription,
+            },
+            {
+              Authorization: `token ${client.token}`,
+              'Content-Type': 'application/json',
+            }
+          );
+        } catch (e2) {
+          // If this also fails, log but don't throw - data remains preserved
+          console.error(`[Archive] Failed to rename mirror repository ${owner}/${repo}:`, e2);
+          console.log(`[Archive] Repository ${owner}/${repo} remains accessible but not marked as archived`);
+          return;
         }
-      );
-      
-      if (renameResponse.status >= 400) {
-        // If rename fails, log but don't throw - data is still preserved
-        console.error(`[Archive] Failed to rename mirror repository ${owner}/${repo}: ${renameResponse.status}`);
-        console.log(`[Archive] Repository ${owner}/${repo} remains accessible but not marked as archived`);
-        return;
       }
       
       console.log(`[Archive] Successfully marked mirror repository ${owner}/${repo} as archived (renamed to ${archivedName})`);

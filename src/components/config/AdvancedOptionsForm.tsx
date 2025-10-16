@@ -67,21 +67,21 @@ export function AdvancedOptionsForm({
 
           <div className="flex items-center">
             <Checkbox
-              id="skip-starred-issues"
-              checked={config.skipStarredIssues}
+              id="starred-code-only"
+              checked={config.starredCodeOnly}
               onCheckedChange={(checked) =>
-                handleChange("skipStarredIssues", Boolean(checked))
+                handleChange("starredCodeOnly", Boolean(checked))
               }
             />
             <label
-              htmlFor="skip-starred-issues"
+              htmlFor="starred-code-only"
               className="ml-2 text-sm select-none"
             >
-              Don't fetch issues for starred repos
+              Code-only mode for starred repos
             </label>
           </div>
           <p className="text-xs text-muted-foreground ml-6">
-            Skip mirroring issues and pull requests for starred repositories
+            Mirror only source code for starred repositories, skipping all metadata (issues, PRs, labels, milestones, wiki, releases)
           </p>
         </div>
       </CardContent>

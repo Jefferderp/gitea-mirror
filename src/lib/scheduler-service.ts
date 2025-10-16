@@ -166,6 +166,75 @@ async function runScheduledSync(config: any): Promise<void> {
       }
     }
     
+    // Auto-mirror: Mirror imported/pending/failed repositories if enabled
+    if (scheduleConfig.autoMirror) {
+      try {
+        console.log(`[Scheduler] Auto-mirror enabled - checking for repositories to mirror for user ${userId}...`);
+        const reposNeedingMirror = await db
+          .select()
+          .from(repositories)
+          .where(
+            and(
+              eq(repositories.userId, userId),
+              or(
+                eq(repositories.status, 'imported'),
+                eq(repositories.status, 'pending'),
+                eq(repositories.status, 'failed')
+              )
+            )
+          );
+
+        if (reposNeedingMirror.length > 0) {
+          console.log(`[Scheduler] Found ${reposNeedingMirror.length} repositories that need initial mirroring`);
+
+          // Prepare Octokit client
+          const decryptedToken = getDecryptedGitHubToken(config);
+          const { Octokit } = await import('@octokit/rest');
+          const octokit = new Octokit({ auth: decryptedToken });
+
+          // Process repositories in batches
+          const batchSize = scheduleConfig.batchSize || 10;
+          const pauseBetweenBatches = scheduleConfig.pauseBetweenBatches || 2000;
+          for (let i = 0; i < reposNeedingMirror.length; i += batchSize) {
+            const batch = reposNeedingMirror.slice(i, Math.min(i + batchSize, reposNeedingMirror.length));
+            console.log(`[Scheduler] Auto-mirror batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(reposNeedingMirror.length / batchSize)} (${batch.length} repos)`);
+
+            await Promise.all(
+              batch.map(async (repo) => {
+                try {
+                  const repository: Repository = {
+                    ...repo,
+                    status: repoStatusEnum.parse(repo.status),
+                    organization: repo.organization ?? undefined,
+                    lastMirrored: repo.lastMirrored ?? undefined,
+                    errorMessage: repo.errorMessage ?? undefined,
+                    mirroredLocation: repo.mirroredLocation || '',
+                    forkedFrom: repo.forkedFrom ?? undefined,
+                    visibility: repositoryVisibilityEnum.parse(repo.visibility),
+                  };
+
+                  await mirrorGithubRepoToGitea({ octokit, repository, config });
+                  console.log(`[Scheduler] Auto-mirrored repository: ${repo.fullName}`);
+                } catch (error) {
+                  console.error(`[Scheduler] Failed to auto-mirror repository ${repo.fullName}:`, error);
+                }
+              })
+            );
+
+            // Pause between batches if configured
+            if (i + batchSize < reposNeedingMirror.length) {
+              console.log(`[Scheduler] Pausing for ${pauseBetweenBatches}ms before next auto-mirror batch...`);
+              await new Promise(resolve => setTimeout(resolve, pauseBetweenBatches));
+            }
+          }
+        } else {
+          console.log(`[Scheduler] No repositories need initial mirroring`);
+        }
+      } catch (mirrorError) {
+        console.error(`[Scheduler] Error during auto-mirror phase for user ${userId}:`, mirrorError);
+      }
+    }
+
     // Get repositories to sync
     let reposToSync = await db
       .select()

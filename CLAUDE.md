@@ -193,7 +193,7 @@ export async function POST({ request }: APIContext) {
 
 ### Advanced Options (UI Fields)
 - **skipForks**: Skip forked repositories (default: false)
-- **skipStarredIssues**: Skip issues for starred repositories (default: false) - enables "Lightweight mode" for starred repos
+- **starredCodeOnly**: Skip issues for starred repositories (default: false) - enables "Lightweight mode" for starred repos
 
 ### Repository Statuses
 Repositories can have the following statuses:

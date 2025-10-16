@@ -28,7 +28,8 @@ export const githubConfigSchema = z.object({
   starredReposStrategy: z.enum(["single-organization", "preserve-structure"]).default("single-organization"),
   mirrorStrategy: z.enum(["preserve", "single-org", "flat-user", "mixed"]).default("preserve"),
   defaultOrg: z.string().optional(),
-  skipStarredIssues: z.boolean().default(false),
+  starredCodeOnly: z.boolean().default(false),
+  skipStarredIssues: z.boolean().optional(), // Deprecated: kept for backward compatibility, use starredCodeOnly instead
   starredDuplicateStrategy: z.enum(["suffix", "prefix", "owner-org"]).default("suffix").optional(),
 });
 
@@ -82,6 +83,8 @@ export const scheduleConfigSchema = z.object({
   updateInterval: z.number().default(86400000),
   skipRecentlyMirrored: z.boolean().default(true),
   recentThreshold: z.number().default(3600000),
+  autoImport: z.boolean().default(true),
+  autoMirror: z.boolean().default(false),
   lastRun: z.coerce.date().optional(),
   nextRun: z.coerce.date().optional(),
 });
@@ -153,6 +156,7 @@ export const repositorySchema = z.object({
       "deleted",
       "syncing",
       "synced",
+      "archived",
     ])
     .default("imported"),
   lastMirrored: z.coerce.date().optional().nullable(),
@@ -182,6 +186,7 @@ export const mirrorJobSchema = z.object({
       "deleted",
       "syncing",
       "synced",
+      "archived",
     ])
     .default("imported"),
   message: z.string(),

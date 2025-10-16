@@ -331,7 +331,7 @@ describe("getGiteaRepoOwner - Organization Override Tests", () => {
       excludeOrgs: [],
       mirrorPublicOrgs: false,
       publicOrgs: [],
-      skipStarredIssues: false,
+      starredCodeOnly: false,
       mirrorStrategy: "preserve"
     },
     giteaConfig: {

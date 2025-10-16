@@ -195,6 +195,7 @@ Configure automatic scheduled mirroring.
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
 | `AUTO_IMPORT_REPOS` | Automatically discover and import new GitHub repositories during scheduled syncs | `true` | `true`, `false` |
+| `AUTO_MIRROR_REPOS` | Automatically mirror newly imported repositories during scheduled syncs (no manual “Mirror All” required) | `false` | `true`, `false` |
 | `SCHEDULE_ONLY_MIRROR_UPDATED` | Only mirror repos with updates | `false` | `true`, `false` |
 | `SCHEDULE_UPDATE_INTERVAL` | Check for updates interval (milliseconds) | `86400000` | Number |
 | `SCHEDULE_SKIP_RECENTLY_MIRRORED` | Skip recently mirrored repos | `true` | `true`, `false` |

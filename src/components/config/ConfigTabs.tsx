@@ -71,7 +71,7 @@ export function ConfigTabs() {
     },
     advancedOptions: {
       skipForks: false,
-      skipStarredIssues: false,
+      starredCodeOnly: false,
     },
   });
   const { user } = useAuth();

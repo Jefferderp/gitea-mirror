@@ -7,7 +7,7 @@
 import { db, configs, repositories } from '@/lib/db';
 import { eq, and, or, sql, not, inArray } from 'drizzle-orm';
 import { createGitHubClient, getGithubRepositories, getGithubStarredRepositories } from '@/lib/github';
-import { createGiteaClient, deleteGiteaRepo, archiveGiteaRepo } from '@/lib/gitea';
+import { createGiteaClient, deleteGiteaRepo, archiveGiteaRepo, getGiteaRepoOwnerAsync, checkRepoLocation } from '@/lib/gitea';
 import { getDecryptedGitHubToken, getDecryptedGiteaToken } from '@/lib/utils/config-encryption';
 import { publishEvent } from '@/lib/events';
 
@@ -109,26 +109,46 @@ async function handleOrphanedRepository(
     const giteaToken = getDecryptedGiteaToken(config);
     const giteaClient = createGiteaClient(config.giteaConfig.url, giteaToken);
     
-    // Determine the Gitea owner and repo name
-    const mirroredLocation = repo.mirroredLocation || '';
-    let giteaOwner = repo.owner;
-    let giteaRepoName = repo.name;
-    
-    if (mirroredLocation) {
-      const parts = mirroredLocation.split('/');
-      if (parts.length >= 2) {
-        giteaOwner = parts[parts.length - 2];
-        giteaRepoName = parts[parts.length - 1];
-      }
+    // Determine the Gitea owner and repo name more robustly
+    const mirroredLocation = (repo.mirroredLocation || '').trim();
+    let giteaOwner: string;
+    let giteaRepoName: string;
+
+    if (mirroredLocation && mirroredLocation.includes('/')) {
+      const [ownerPart, namePart] = mirroredLocation.split('/');
+      giteaOwner = ownerPart;
+      giteaRepoName = namePart;
+    } else {
+      // Fall back to expected owner based on config and repo flags (starred/org overrides)
+      giteaOwner = await getGiteaRepoOwnerAsync({ config, repository: repo });
+      giteaRepoName = repo.name;
     }
+
+    // Normalize owner casing to avoid GetUserByName issues on some Gitea setups
+    giteaOwner = giteaOwner.trim();
     
     if (action === 'archive') {
       console.log(`[Repository Cleanup] Archiving orphaned repository ${repoFullName} in Gitea`);
+      // Best-effort check to validate actual location; falls back gracefully
+      try {
+        const { present, actualOwner } = await checkRepoLocation({
+          config,
+          repository: repo,
+          expectedOwner: giteaOwner,
+        });
+        if (present) {
+          giteaOwner = actualOwner;
+        }
+      } catch {
+        // Non-fatal; continue with best guess
+      }
+
       await archiveGiteaRepo(giteaClient, giteaOwner, giteaRepoName);
       
       // Update database status
       await db.update(repositories).set({
         status: 'archived',
+        isArchived: true,
         errorMessage: 'Repository archived - no longer in GitHub',
         updatedAt: new Date(),
       }).where(eq(repositories.id, repo.id));

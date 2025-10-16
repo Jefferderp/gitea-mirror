@@ -10,6 +10,10 @@ on:
       - 'package.json'
       - 'bun.lock*'
       - '.github/workflows/docker-build.yml'
+      - 'docker-entrypoint.sh'
+      - 'drizzle/**'
+      - 'scripts/**'
+      - 'src/**'
   pull_request:
     paths:
       - 'Dockerfile'
@@ -17,6 +21,10 @@ on:
       - 'package.json'
       - 'bun.lock*'
       - '.github/workflows/docker-build.yml'
+      - 'docker-entrypoint.sh'
+      - 'drizzle/**'
+      - 'scripts/**'
+      - 'src/**'
   schedule:
     - cron: '0 0 * * 0'  # Weekly security scan on Sunday at midnight
 
@@ -48,7 +56,6 @@ jobs:
 
       - name: Log into registry
         uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -89,6 +96,7 @@ jobs:
             type=sha,prefix=,suffix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.tag_version.outputs.VERSION }}
+            type=ref,event=pr,prefix=pr-
 
       # Build and push Docker image
       - name: Build and push Docker image
@@ -97,19 +105,76 @@ jobs:
         with:
           context: .
           platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
-          tags: ${{ github.event_name == 'pull_request' && 'gitea-mirror:scan' || steps.meta.outputs.tags }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Load image locally for security scanning (PRs only)
+      - name: Load image for scanning
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: gitea-mirror:scan
+          cache-from: type=gha
+
       # Wait for image to be available in registry
       - name: Wait for image availability
-        if: github.event_name != 'pull_request'
         run: |
           echo "Waiting for image to be available in registry..."
           sleep 5
+
+      # Add comment to PR with image details
+      - name: Comment PR with image tag
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const imageTag = `pr-${prNumber}`;
+            const imagePath = `${{ env.REGISTRY }}/${{ env.IMAGE }}:${imageTag}`.toLowerCase();
+
+            const comment = `## 🐳 Docker Image Built Successfully
+
+            Your PR image is available for testing:
+
+            **Image Tag:** \`${imageTag}\`
+            **Full Image Path:** \`${imagePath}\`
+
+            ### Pull and Test
+            \`\`\`bash
+            docker pull ${imagePath}
+            docker run -d -p 3000:3000 --name gitea-mirror-test ${imagePath}
+            \`\`\`
+
+            ### Docker Compose Testing
+            \`\`\`yaml
+            services:
+              gitea-mirror:
+                image: ${imagePath}
+                ports:
+                  - "3000:3000"
+                environment:
+                  - BETTER_AUTH_SECRET=your-secret-here
+            \`\`\`
+
+            > 💡 **Note:** PR images are tagged as \`pr-<number>\` and only built for \`linux/amd64\` to speed up CI.
+            > Production images (\`latest\`, version tags) are multi-platform (\`linux/amd64\`, \`linux/arm64\`).
+
+            ---
+            📦 View in [GitHub Packages](https://github.com/${{ github.repository }}/pkgs/container/gitea-mirror)`;
+
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
 
       # Docker Scout comprehensive security analysis
       - name: Docker Scout - Vulnerability Analysis & Recommendations

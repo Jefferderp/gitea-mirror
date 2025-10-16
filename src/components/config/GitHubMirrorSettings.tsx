@@ -90,10 +90,10 @@ export function GitHubMirrorSettings({
   // Calculate what content is included for starred repos
   const starredRepoContent = {
     code: true, // Always included
-    releases: !advancedOptions.skipStarredIssues && mirrorOptions.mirrorReleases,
-    issues: !advancedOptions.skipStarredIssues && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.issues,
-    pullRequests: !advancedOptions.skipStarredIssues && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.pullRequests,
-    wiki: !advancedOptions.skipStarredIssues && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.wiki,
+    releases: !advancedOptions.starredCodeOnly && mirrorOptions.mirrorReleases,
+    issues: !advancedOptions.starredCodeOnly && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.issues,
+    pullRequests: !advancedOptions.starredCodeOnly && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.pullRequests,
+    wiki: !advancedOptions.starredCodeOnly && mirrorOptions.mirrorMetadata && mirrorOptions.metadataComponents.wiki,
   };
   
   const starredContentCount = Object.entries(starredRepoContent).filter(([key, value]) => key !== 'code' && value).length;
@@ -179,7 +179,7 @@ export function GitHubMirrorSettings({
                     className="h-8 text-xs font-normal min-w-[140px] md:min-w-[140px] justify-between"
                   >
                     <span>
-                      {advancedOptions.skipStarredIssues ? (
+                      {advancedOptions.starredCodeOnly ? (
                         "Code only"
                       ) : starredContentCount === 0 ? (
                         "Code only"
@@ -217,8 +217,8 @@ export function GitHubMirrorSettings({
                       <div className="flex items-center space-x-3 py-1 px-1 rounded hover:bg-accent">
                         <Checkbox
                           id="starred-lightweight"
-                          checked={advancedOptions.skipStarredIssues}
-                          onCheckedChange={(checked) => handleAdvancedChange('skipStarredIssues', !!checked)}
+                          checked={advancedOptions.starredCodeOnly}
+                          onCheckedChange={(checked) => handleAdvancedChange('starredCodeOnly', !!checked)}
                         />
                         <Label
                           htmlFor="starred-lightweight"
@@ -233,7 +233,7 @@ export function GitHubMirrorSettings({
                         </Label>
                       </div>
                       
-                      {!advancedOptions.skipStarredIssues && (
+                      {!advancedOptions.starredCodeOnly && (
                         <>
                           <Separator className="my-2" />
                           <div className="space-y-2">

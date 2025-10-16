@@ -8,6 +8,7 @@ import type {
   ScheduleSyncRepoResponse,
 } from "@/types/sync";
 import { createSecureErrorResponse } from "@/lib/utils";
+import { parseInterval } from "@/lib/utils/duration-parser";
 
 export const POST: APIRoute = async ({ request }) => {
   try {
@@ -72,8 +73,17 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Calculate nextRun and update lastRun and nextRun in the config
     const currentTime = new Date();
-    const interval = config.scheduleConfig?.interval ?? 3600;
-    const nextRun = new Date(currentTime.getTime() + interval * 1000);
+    let intervalMs = 3600 * 1000;
+    try {
+      intervalMs = parseInterval(
+        typeof config.scheduleConfig?.interval === 'number'
+          ? config.scheduleConfig.interval
+          : (config.scheduleConfig?.interval as unknown as string) || '3600'
+      );
+    } catch {
+      intervalMs = 3600 * 1000;
+    }
+    const nextRun = new Date(currentTime.getTime() + intervalMs);
 
     // Update the full giteaConfig object
     await db

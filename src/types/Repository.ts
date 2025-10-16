@@ -12,6 +12,7 @@ export const repoStatusEnum = z.enum([
   "deleted",
   "syncing",
   "synced",
+  "archived",
 ]);
 
 export type RepoStatus = z.infer<typeof repoStatusEnum>;

@@ -87,7 +87,10 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     // Map schedule and cleanup configs to database schema
-    const processedScheduleConfig = mapUiScheduleToDb(scheduleConfig);
+    const processedScheduleConfig = mapUiScheduleToDb(
+      scheduleConfig,
+      existingConfig ? existingConfig.scheduleConfig : undefined
+    );
     const processedCleanupConfig = mapUiCleanupToDb(cleanupConfig);
 
     if (existingConfig) {
