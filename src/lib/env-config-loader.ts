@@ -21,7 +21,7 @@ interface EnvConfig {
     mirrorOrganizations?: boolean;
     preserveOrgStructure?: boolean;
     onlyMirrorOrgs?: boolean;
-    starredCodeOnly?: boolean;
+    skipStarredIssues?: boolean;
     starredReposOrg?: string;
     mirrorStrategy?: 'preserve' | 'single-org' | 'flat-user' | 'mixed';
   };
@@ -69,8 +69,6 @@ interface EnvConfig {
     updateInterval?: number;
     skipRecentlyMirrored?: boolean;
     recentThreshold?: number;
-    autoImport?: boolean;
-    autoMirror?: boolean;
   };
   cleanup: {
     enabled?: boolean;
@@ -107,7 +105,7 @@ function parseEnvConfig(): EnvConfig {
       mirrorOrganizations: process.env.MIRROR_ORGANIZATIONS === 'true',
       preserveOrgStructure: process.env.PRESERVE_ORG_STRUCTURE === 'true',
       onlyMirrorOrgs: process.env.ONLY_MIRROR_ORGS === 'true',
-      starredCodeOnly: process.env.SKIP_STARRED_ISSUES === 'true',
+      skipStarredIssues: process.env.SKIP_STARRED_ISSUES === 'true',
       starredReposOrg: process.env.STARRED_REPOS_ORG,
       mirrorStrategy: process.env.MIRROR_STRATEGY as 'preserve' | 'single-org' | 'flat-user' | 'mixed',
     },
@@ -159,8 +157,6 @@ function parseEnvConfig(): EnvConfig {
       updateInterval: process.env.SCHEDULE_UPDATE_INTERVAL ? parseInt(process.env.SCHEDULE_UPDATE_INTERVAL, 10) : undefined,
       skipRecentlyMirrored: process.env.SCHEDULE_SKIP_RECENTLY_MIRRORED === 'true',
       recentThreshold: process.env.SCHEDULE_RECENT_THRESHOLD ? parseInt(process.env.SCHEDULE_RECENT_THRESHOLD, 10) : undefined,
-      autoImport: process.env.AUTO_IMPORT_REPOS !== 'false',
-      autoMirror: process.env.AUTO_MIRROR_REPOS === 'true',
     },
     cleanup: {
       enabled: process.env.CLEANUP_ENABLED === 'true' || 
@@ -253,12 +249,8 @@ export async function initializeConfigFromEnv(): Promise<void> {
       starredReposOrg: envConfig.github.starredReposOrg || existingConfig?.[0]?.githubConfig?.starredReposOrg || 'starred',
       mirrorStrategy,
       defaultOrg: envConfig.gitea.organization || existingConfig?.[0]?.githubConfig?.defaultOrg || 'github-mirrors',
-<<<<<<< HEAD
       skipStarredIssues: envConfig.github.skipStarredIssues ?? existingConfig?.[0]?.githubConfig?.skipStarredIssues ?? false,
       starredReposStrategy: existingConfig?.[0]?.githubConfig?.starredReposStrategy || "single-organization",
-=======
-      starredCodeOnly: envConfig.github.starredCodeOnly ?? existingConfig?.[0]?.githubConfig?.starredCodeOnly ?? false,
->>>>>>> upstream/main
     };
 
     // Build Gitea config
@@ -310,8 +302,7 @@ export async function initializeConfigFromEnv(): Promise<void> {
       updateInterval: envConfig.schedule.updateInterval ?? existingConfig?.[0]?.scheduleConfig?.updateInterval ?? 86400000,
       skipRecentlyMirrored: envConfig.schedule.skipRecentlyMirrored ?? existingConfig?.[0]?.scheduleConfig?.skipRecentlyMirrored ?? true,
       recentThreshold: envConfig.schedule.recentThreshold ?? existingConfig?.[0]?.scheduleConfig?.recentThreshold ?? 3600000,
-      autoImport: envConfig.schedule.autoImport ?? existingConfig?.[0]?.scheduleConfig?.autoImport ?? true,
-      autoMirror: envConfig.schedule.autoMirror ?? existingConfig?.[0]?.scheduleConfig?.autoMirror ?? false,
+      autoImport: process.env.AUTO_IMPORT_REPOS !== 'false', // New field for auto-importing new repositories
       lastRun: existingConfig?.[0]?.scheduleConfig?.lastRun || undefined,
       nextRun: existingConfig?.[0]?.scheduleConfig?.nextRun || undefined,
     };
@@ -370,3 +361,4 @@ export async function initializeConfigFromEnv(): Promise<void> {
     // Don't throw - this is a non-critical initialization
   }
 }
+
