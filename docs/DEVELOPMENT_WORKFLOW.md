@@ -16,27 +16,22 @@ This guide covers the development workflow for the open-source Gitea Mirror.
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/yourusername/gitea-mirror.git
+git clone https://github.com/RayLabsHQ/gitea-mirror.git
 cd gitea-mirror
 ```
 
-2. **Install dependencies**:
+2. **Install dependencies and seed the SQLite database**:
 ```bash
-bun install
+bun run setup
 ```
 
-3. **Initialize database**:
-```bash
-bun run init-db
-```
-
-4. **Configure environment**:
+3. **Configure environment (optional)**:
 ```bash
 cp .env.example .env
 # Edit .env with your settings
 ```
 
-5. **Start development server**:
+4. **Start the development server**:
 ```bash
 bun run dev
 ```
@@ -45,29 +40,33 @@ bun run dev
 
 | Command | Description |
 |---------|-------------|
-| `bun run dev` | Start development server with hot reload |
-| `bun run build` | Build for production |
-| `bun run preview` | Preview production build |
-| `bun test` | Run all tests |
+| `bun run dev` | Start the Bun + Astro dev server with hot reload |
+| `bun run build` | Build the production bundle |
+| `bun run preview` | Preview the production build locally |
+| `bun test` | Run the Bun test suite |
 | `bun test:watch` | Run tests in watch mode |
-| `bun run db:studio` | Open database GUI |
+| `bun run db:studio` | Launch Drizzle Kit Studio |
 
 ## Project Structure
 
 ```
 gitea-mirror/
-├── src/
-│   ├── components/      # React components
-│   ├── pages/          # Astro pages & API routes
-│   ├── lib/            # Core logic
-│   │   ├── db/         # Database queries
-│   │   ├── utils/      # Helper functions
-│   │   └── modules/    # Module system
-│   ├── hooks/          # React hooks
-│   └── types/          # TypeScript types
-├── public/             # Static assets
-├── scripts/            # Utility scripts
-└── tests/              # Test files
+├── src/                     # Application UI, API routes, and services
+│   ├── components/          # React components rendered inside Astro pages
+│   ├── pages/               # Astro pages and API routes (e.g., /api/*)
+│   ├── lib/                 # Core logic: GitHub/Gitea clients, scheduler, recovery, db helpers
+│   │   ├── db/              # Drizzle adapter + schema
+│   │   ├── modules/         # Module wiring (jobs, integrations)
+│   │   └── utils/           # Shared utilities
+│   ├── hooks/               # React hooks
+│   ├── content/             # In-app documentation and templated content
+│   ├── layouts/             # Shared layout components
+│   ├── styles/              # Tailwind CSS entrypoints
+│   └── types/               # TypeScript types
+├── scripts/                 # Bun scripts for DB management and maintenance
+├── www/                     # Marketing site (Astro + MDX use cases)
+├── public/                  # Static assets served by Vite/Astro
+└── tests/                   # Dedicated integration/unit test helpers
 ```
 
 ## Feature Development
@@ -80,10 +79,10 @@ git checkout -b feature/my-feature
 ```
 
 2. **Plan your changes**:
-- UI components in `/src/components/`
-- API endpoints in `/src/pages/api/`
-- Database queries in `/src/lib/db/queries/`
-- Types in `/src/types/`
+- UI components live in `src/components/`
+- API endpoints live in `src/pages/api/`
+- Database logic is under `src/lib/db/` (schema + adapter)
+- Shared types are in `src/types/`
 
 3. **Implement the feature**:
 
@@ -120,7 +119,7 @@ describe('My Feature', () => {
 
 5. **Update documentation**:
 - Add JSDoc comments
-- Update README if needed
+- Update README/docs if needed
 - Document API changes
 
 ## Database Development

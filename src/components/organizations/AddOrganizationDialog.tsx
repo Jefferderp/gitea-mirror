@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,9 +20,11 @@ interface AddOrganizationDialogProps {
   onAddOrganization: ({
     org,
     role,
+    force,
   }: {
     org: string;
     role: MembershipRole;
+    force?: boolean;
   }) => Promise<void>;
 }
 
@@ -35,6 +37,14 @@ export default function AddOrganizationDialog({
   const [role, setRole] = useState<MembershipRole>("member");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!isDialogOpen) {
+      setError("");
+      setOrg("");
+      setRole("member");
+    }
+  }, [isDialogOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +64,7 @@ export default function AddOrganizationDialog({
       setRole("member");
       setIsDialogOpen(false);
     } catch (err: any) {
-      setError(err?.message || "Failed to add repository.");
+      setError(err?.message || "Failed to add organization.");
     } finally {
       setIsLoading(false);
     }
@@ -139,7 +149,7 @@ export default function AddOrganizationDialog({
               {isLoading ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
-                "Add Repository"
+                "Add Organization"
               )}
             </Button>
           </div>

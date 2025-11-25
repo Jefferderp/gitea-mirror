@@ -1,5 +1,4 @@
 import type { APIRoute } from "astro";
-import { Octokit } from "@octokit/rest";
 import { configs, db, organizations, repositories } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 import { jsonResponse, createSecureErrorResponse } from "@/lib/utils";
@@ -15,7 +14,7 @@ import { createGitHubClient } from "@/lib/github";
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body: AddOrganizationApiRequest = await request.json();
-    const { role, org, userId } = body;
+    const { role, org, userId, force = false } = body;
 
     if (!org || !userId || !role) {
       return jsonResponse({
@@ -24,21 +23,58 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    // Check if org already exists
-    const existingOrg = await db
+    const trimmedOrg = org.trim();
+    const normalizedOrg = trimmedOrg.toLowerCase();
+
+    // Check if org already exists (case-insensitive)
+    const [existingOrg] = await db
       .select()
       .from(organizations)
       .where(
-        and(eq(organizations.name, org), eq(organizations.userId, userId))
-      );
+        and(
+          eq(organizations.userId, userId),
+          eq(organizations.normalizedName, normalizedOrg)
+        )
+      )
+      .limit(1);
 
-    if (existingOrg.length > 0) {
+    if (existingOrg && !force) {
       return jsonResponse({
         data: {
           success: false,
           error: "Organization already exists for this user",
         },
-        status: 400,
+        status: 409,
+      });
+    }
+
+    if (existingOrg && force) {
+      const [updatedOrg] = await db
+        .update(organizations)
+        .set({
+          membershipRole: role,
+          normalizedName: normalizedOrg,
+          updatedAt: new Date(),
+        })
+        .where(eq(organizations.id, existingOrg.id))
+        .returning();
+
+      const resPayload: AddOrganizationApiResponse = {
+        success: true,
+        organization: updatedOrg ?? existingOrg,
+        message: "Organization already exists; using existing record.",
+      };
+
+      return jsonResponse({ data: resPayload, status: 200 });
+    }
+
+    if (existingOrg) {
+      return jsonResponse({
+        data: {
+          success: false,
+          error: "Organization already exists for this user",
+        },
+        status: 409,
       });
     }
 
@@ -71,17 +107,21 @@ export const POST: APIRoute = async ({ request }) => {
     
     // Create authenticated Octokit instance with rate limit tracking
     const githubUsername = decryptedConfig.githubConfig?.owner || undefined;
-    const octokit = createGitHubClient(decryptedConfig.githubConfig.token, userId, githubUsername);
+    const octokit = createGitHubClient(
+      decryptedConfig.githubConfig.token,
+      userId,
+      githubUsername
+    );
 
     // Fetch org metadata
-    const { data: orgData } = await octokit.orgs.get({ org });
+    const { data: orgData } = await octokit.orgs.get({ org: trimmedOrg });
 
     // Fetch repos based on config settings
     const allRepos = [];
     
     // Fetch all repos (public, private, and member) to show in UI
     const publicRepos = await octokit.paginate(octokit.repos.listForOrg, {
-      org,
+      org: trimmedOrg,
       type: "public",
       per_page: 100,
     });
@@ -89,7 +129,7 @@ export const POST: APIRoute = async ({ request }) => {
     
     // Always fetch private repos to show them in the UI
     const privateRepos = await octokit.paginate(octokit.repos.listForOrg, {
-      org,
+      org: trimmedOrg,
       type: "private",
       per_page: 100,
     });
@@ -97,7 +137,7 @@ export const POST: APIRoute = async ({ request }) => {
     
     // Also fetch member repos (includes private repos the user has access to)
     const memberRepos = await octokit.paginate(octokit.repos.listForOrg, {
-      org,
+      org: trimmedOrg,
       type: "member",
       per_page: 100,
     });
@@ -107,38 +147,44 @@ export const POST: APIRoute = async ({ request }) => {
     allRepos.push(...uniqueMemberRepos);
 
     // Insert repositories
-    const repoRecords = allRepos.map((repo) => ({
-      id: uuidv4(),
-      userId,
-      configId,
-      name: repo.name,
-      fullName: repo.full_name,
-      url: repo.html_url,
-      cloneUrl: repo.clone_url ?? "",
-      owner: repo.owner.login,
-      organization:
-        repo.owner.type === "Organization" ? repo.owner.login : null,
-      mirroredLocation: "",
-      destinationOrg: null,
-      isPrivate: repo.private,
-      isForked: repo.fork,
-      forkedFrom: null,
-      hasIssues: repo.has_issues,
-      isStarred: false,
-      isArchived: repo.archived,
-      size: repo.size,
-      hasLFS: false,
-      hasSubmodules: false,
-      language: repo.language ?? null,
-      description: repo.description ?? null,
-      defaultBranch: repo.default_branch ?? "main",
-      visibility: (repo.visibility ?? "public") as RepositoryVisibility,
-      status: "imported" as RepoStatus,
-      lastMirrored: null,
-      errorMessage: null,
-      createdAt: repo.created_at ? new Date(repo.created_at) : new Date(),
-      updatedAt: repo.updated_at ? new Date(repo.updated_at) : new Date(),
-    }));
+    const repoRecords = allRepos.map((repo) => {
+      const normalizedOwner = repo.owner.login.trim().toLowerCase();
+      const normalizedRepoName = repo.name.trim().toLowerCase();
+
+      return {
+        id: uuidv4(),
+        userId,
+        configId,
+        name: repo.name,
+        fullName: repo.full_name,
+        normalizedFullName: `${normalizedOwner}/${normalizedRepoName}`,
+        url: repo.html_url,
+        cloneUrl: repo.clone_url ?? "",
+        owner: repo.owner.login,
+        organization:
+          repo.owner.type === "Organization" ? repo.owner.login : null,
+        mirroredLocation: "",
+        destinationOrg: null,
+        isPrivate: repo.private,
+        isForked: repo.fork,
+        forkedFrom: null,
+        hasIssues: repo.has_issues,
+        isStarred: false,
+        isArchived: repo.archived,
+        size: repo.size,
+        hasLFS: false,
+        hasSubmodules: false,
+        language: repo.language ?? null,
+        description: repo.description ?? null,
+        defaultBranch: repo.default_branch ?? "main",
+        visibility: (repo.visibility ?? "public") as RepositoryVisibility,
+        status: "imported" as RepoStatus,
+        lastMirrored: null,
+        errorMessage: null,
+        createdAt: repo.created_at ? new Date(repo.created_at) : new Date(),
+        updatedAt: repo.updated_at ? new Date(repo.updated_at) : new Date(),
+      };
+    });
 
     // Batch insert repositories to avoid SQLite parameter limit
     // Compute batch size based on column count
@@ -150,7 +196,7 @@ export const POST: APIRoute = async ({ request }) => {
       await db
         .insert(repositories)
         .values(batch)
-        .onConflictDoNothing({ target: [repositories.userId, repositories.fullName] });
+        .onConflictDoNothing({ target: [repositories.userId, repositories.normalizedFullName] });
     }
 
     // Insert organization metadata
@@ -159,6 +205,7 @@ export const POST: APIRoute = async ({ request }) => {
       userId,
       configId,
       name: orgData.login,
+      normalizedName: normalizedOrg,
       avatarUrl: orgData.avatar_url,
       membershipRole: role,
       isIncluded: false,

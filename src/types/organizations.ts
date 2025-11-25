@@ -5,6 +5,7 @@ import type { RepoStatus } from "./Repository";
 export const membershipRoleEnum = z.enum([
   "member",
   "admin",
+  "owner",
   "billing_manager",
 ]);
 
@@ -48,11 +49,12 @@ export interface AddOrganizationApiRequest {
   userId: string;
   org: string;
   role: MembershipRole;
+  force?: boolean;
 }
 
 export interface AddOrganizationApiResponse {
   success: boolean;
   message: string;
-  organization: Organization;
+  organization?: Organization;
   error?: string;
 }

@@ -91,6 +91,8 @@ export function mapUiToDbConfig(
     forkStrategy: advancedOptions.skipForks ? "skip" : "reference",
     
     // Mirror options from UI
+    issueConcurrency: giteaConfig.issueConcurrency ?? 3,
+    pullRequestConcurrency: giteaConfig.pullRequestConcurrency ?? 5,
     mirrorReleases: mirrorOptions.mirrorReleases,
     releaseLimit: mirrorOptions.releaseLimit || 10,
     mirrorMetadata: mirrorOptions.mirrorMetadata,
@@ -136,6 +138,8 @@ export function mapDbToUiConfig(dbConfig: any): {
     preserveOrgStructure: dbConfig.giteaConfig?.preserveVisibility || false, // Map preserveVisibility
     mirrorStrategy: dbConfig.githubConfig?.mirrorStrategy || "preserve", // Get from GitHub config
     personalReposOrg: undefined, // Not stored in current schema
+    issueConcurrency: dbConfig.giteaConfig?.issueConcurrency ?? 3,
+    pullRequestConcurrency: dbConfig.giteaConfig?.pullRequestConcurrency ?? 5,
   };
 
   // Map mirror options from various database fields
@@ -229,16 +233,26 @@ export function mapDbScheduleToUi(dbSchedule: DbScheduleConfig): any {
  * Maps UI cleanup config to database schema
  */
 export function mapUiCleanupToDb(uiCleanup: any): DbCleanupConfig {
+  const parsedRetention =
+    typeof uiCleanup.retentionDays === "string"
+      ? parseInt(uiCleanup.retentionDays, 10)
+      : uiCleanup.retentionDays;
+  const retentionSeconds = Number.isFinite(parsedRetention)
+    ? parsedRetention
+    : 604800;
+
   return {
-    enabled: uiCleanup.enabled || false,
-    retentionDays: uiCleanup.retentionDays || 604800, // Default to 7 days
-    deleteFromGitea: false,
-    deleteIfNotInGitHub: true,
-    protectedRepos: [],
-    dryRun: true,
-    orphanedRepoAction: "archive",
-    batchSize: 10,
-    pauseBetweenDeletes: 2000,
+    enabled: Boolean(uiCleanup.enabled),
+    retentionDays: retentionSeconds,
+    deleteFromGitea: uiCleanup.deleteFromGitea ?? false,
+    deleteIfNotInGitHub: uiCleanup.deleteIfNotInGitHub ?? true,
+    protectedRepos: uiCleanup.protectedRepos ?? [],
+    dryRun: uiCleanup.dryRun ?? false,
+    orphanedRepoAction: (uiCleanup.orphanedRepoAction as DbCleanupConfig["orphanedRepoAction"]) || "archive",
+    batchSize: uiCleanup.batchSize ?? 10,
+    pauseBetweenDeletes: uiCleanup.pauseBetweenDeletes ?? 2000,
+    lastRun: uiCleanup.lastRun ?? null,
+    nextRun: uiCleanup.nextRun ?? null,
   };
 }
 
@@ -257,9 +271,16 @@ export function mapDbCleanupToUi(dbCleanup: DbCleanupConfig): any {
   }
 
   return {
-    enabled: dbCleanup.enabled || false,
-    retentionDays: dbCleanup.retentionDays || 604800, // Use actual value from DB or default to 7 days
-    lastRun: dbCleanup.lastRun || null,
-    nextRun: dbCleanup.nextRun || null,
+    enabled: dbCleanup.enabled ?? false,
+    retentionDays: dbCleanup.retentionDays ?? 604800,
+    deleteFromGitea: dbCleanup.deleteFromGitea ?? false,
+    deleteIfNotInGitHub: dbCleanup.deleteIfNotInGitHub ?? true,
+    protectedRepos: dbCleanup.protectedRepos ?? [],
+    dryRun: dbCleanup.dryRun ?? false,
+    orphanedRepoAction: dbCleanup.orphanedRepoAction ?? "archive",
+    batchSize: dbCleanup.batchSize ?? 10,
+    pauseBetweenDeletes: dbCleanup.pauseBetweenDeletes ?? 2000,
+    lastRun: dbCleanup.lastRun ?? null,
+    nextRun: dbCleanup.nextRun ?? null,
   };
 }

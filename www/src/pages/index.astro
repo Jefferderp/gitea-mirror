@@ -4,47 +4,51 @@ import { Header } from '../components/Header';
 import { Hero } from '../components/Hero';
 import ShaderBackground from '../components/ShaderBackground.astro';
 import Features from '../components/Features.astro';
+import UseCases from '../components/UseCases.astro';
 import Screenshots from '../components/Screenshots.astro';
 import { Installation } from '../components/Installation';
 import { CTA } from '../components/CTA';
+import FAQ from '../components/FAQ.astro';
 import Footer from '../components/Footer.astro';
 
 const siteUrl = 'https://gitea-mirror.com';
-const title = 'Gitea Mirror - Automated GitHub to Gitea Repository Mirroring & Backup';
-const description = 'Automatically mirror and backup your GitHub repositories to self-hosted Gitea. Keep your code safe with scheduled syncing, bulk operations, and real-time monitoring. Free and open source.';
-const keywords = 'github backup, gitea mirror, repository sync, github to gitea, git mirror, code backup, self-hosted git, repository migration, github mirror tool, gitea sync, automated backup, github repository backup, git repository mirror, self-hosted backup solution';
+const title = 'GitHub Backup Tool | Self-Hosted Repository Backup to Gitea';
+const description = 'Automatically backup GitHub repos to your own Gitea server. Preserve issues, PRs, releases & wiki. Self-hosted, Docker-ready. Free alternative to cloud backup services.';
+const keywords = 'github backup, github backup self hosted, github repository backup, backup github to nas, github disaster recovery, offline github backup, github backup docker, automatic github backup, github account backup, gitea mirror, self-hosted git backup, repository sync, github to gitea, git mirror, code backup, self-hosted backup solution';
 
 // Structured data for SEO
 const structuredData = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "Gitea Mirror",
-  "applicationCategory": "DeveloperApplication",
+  "applicationCategory": "BackupApplication",
   "operatingSystem": "Linux, macOS, Windows",
   "offers": {
     "@type": "Offer",
     "price": "0",
     "priceCurrency": "USD"
   },
-  "description": description,
+  "description": "Automatic GitHub repository backup to self-hosted Gitea. Preserves complete history, issues, PRs, and releases. Free alternative to cloud backup services.",
   "url": siteUrl,
   "author": {
     "@type": "Organization",
     "name": "RayLabs",
     "url": "https://github.com/RayLabsHQ"
   },
-  "softwareVersion": "2.22.0",
+  "softwareVersion": "3.9.2",
   "screenshot": [
     `${siteUrl}/assets/dashboard.png`,
     `${siteUrl}/assets/repositories.png`,
     `${siteUrl}/assets/organisation.png`
   ],
   "featureList": [
-    "Automated repository mirroring",
-    "Bulk organization sync",
-    "Real-time monitoring",
-    "Self-hosted solution",
-    "Open source"
+    "Automated scheduled backups",
+    "Self-hosted (full data ownership)",
+    "Metadata preservation (issues, PRs, releases, wiki)",
+    "Docker support",
+    "Multi-repository backup",
+    "Git LFS support",
+    "Free and open source"
   ],
   "softwareRequirements": "Docker or Bun runtime"
 };
@@ -123,8 +127,10 @@ const structuredData = {
         <Hero client:load />
       </div>
       <Features />
+      <UseCases />
       <Screenshots />
       <Installation client:load />
+      <FAQ />
       <CTA client:load />
     </main>
     

@@ -14,9 +14,9 @@ export default defineConfig({
     plugins: [tailwindcss()],
     build: {
       rollupOptions: {
-        external: ['bun']
-      }
-    }
+        external: ['bun', 'bun:*'],
+      },
+    },
   },
   integrations: [react()]
 });

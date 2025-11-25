@@ -8,10 +8,19 @@ import { createMockResponse, mockFetch } from "@/tests/mock-fetch";
 // Mock the isRepoPresentInGitea function
 const mockIsRepoPresentInGitea = mock(() => Promise.resolve(false));
 
+let mockDbSelectResult: any[] = [];
+
 // Mock the database module
 mock.module("@/lib/db", () => {
   return {
     db: {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve(mockDbSelectResult)
+          })
+        })
+      }),
       update: () => ({
         set: () => ({
           where: () => Promise.resolve()
@@ -63,6 +72,7 @@ describe("Gitea Repository Mirroring", () => {
     originalConsoleError = console.error;
     console.log = mock(() => {});
     console.error = mock(() => {});
+    mockDbSelectResult = [];
   });
 
   afterEach(() => {
@@ -448,5 +458,38 @@ describe("getGiteaRepoOwner - Organization Override Tests", () => {
     const repo = { ...baseRepo, organization: "myorg" };
     const result = getGiteaRepoOwner({ config: configWithFlatUser, repository: repo });
     expect(result).toBe("giteauser");
+  });
+
+  test("getGiteaRepoOwnerAsync honors organization override for owner role", async () => {
+    mockDbSelectResult = [
+      {
+        id: "org-id",
+        userId: "user-id",
+        configId: "config-id",
+        name: "myorg",
+        membershipRole: "owner",
+        status: "imported",
+        destinationOrg: "custom-org",
+        avatarUrl: "https://example.com/avatar.png",
+        isIncluded: true,
+        repositoryCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    ];
+
+    const configWithUser: Partial<Config> = {
+      ...baseConfig,
+      userId: "user-id"
+    };
+
+    const repo = { ...baseRepo, organization: "myorg" };
+
+    const result = await getGiteaRepoOwnerAsync({
+      config: configWithUser,
+      repository: repo
+    });
+
+    expect(result).toBe("custom-org");
   });
 });

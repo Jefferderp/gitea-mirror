@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Button } from "@/components/ui/button";
-import { Search, RefreshCw, FlipHorizontal, RotateCcw, X, Filter, Ban, Check } from "lucide-react";
+import { Search, RefreshCw, FlipHorizontal, RotateCcw, X, Filter, Ban, Check, LoaderCircle, Trash2 } from "lucide-react";
 import type { MirrorRepoRequest, MirrorRepoResponse } from "@/types/mirror";
 import {
   Drawer,
@@ -30,6 +30,14 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useSSE } from "@/hooks/useSEE";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import { toast } from "sonner";
@@ -69,6 +77,15 @@ export default function Repository() {
   }, [setFilter]);
 
   const [loadingRepoIds, setLoadingRepoIds] = useState<Set<string>>(new Set()); // this is used when the api actions are performed
+  const [duplicateRepoCandidate, setDuplicateRepoCandidate] = useState<{
+    owner: string;
+    repo: string;
+  } | null>(null);
+  const [isDuplicateRepoDialogOpen, setIsDuplicateRepoDialogOpen] = useState(false);
+  const [isProcessingDuplicateRepo, setIsProcessingDuplicateRepo] = useState(false);
+  const [repoToDelete, setRepoToDelete] = useState<Repository | null>(null);
+  const [isDeleteRepoDialogOpen, setIsDeleteRepoDialogOpen] = useState(false);
+  const [isDeletingRepo, setIsDeletingRepo] = useState(false);
 
   // Create a stable callback using useCallback
   const handleNewMessage = useCallback((data: MirrorJob) => {
@@ -320,7 +337,7 @@ export default function Repository() {
     
     const selectedRepos = repositories.filter(repo => repo.id && selectedRepoIds.has(repo.id));
     const eligibleRepos = selectedRepos.filter(
-      repo => repo.status === "mirrored" || repo.status === "synced"
+      repo => ["mirrored", "synced", "archived"].includes(repo.status)
     );
 
     if (eligibleRepos.length === 0) {
@@ -618,19 +635,45 @@ export default function Repository() {
   const handleAddRepository = async ({
     repo,
     owner,
+    force = false,
   }: {
     repo: string;
     owner: string;
+    force?: boolean;
   }) => {
-    try {
-      if (!user || !user.id) {
-        return;
-      }
+    if (!user || !user.id) {
+      return;
+    }
 
+    const trimmedRepo = repo.trim();
+    const trimmedOwner = owner.trim();
+
+    if (!trimmedRepo || !trimmedOwner) {
+      toast.error("Please provide both owner and repository name.");
+      throw new Error("Invalid repository details");
+    }
+
+    const normalizedFullName = `${trimmedOwner}/${trimmedRepo}`.toLowerCase();
+
+    if (!force) {
+      const duplicateRepo = repositories.find(
+        (existing) => existing.normalizedFullName?.toLowerCase() === normalizedFullName
+      );
+
+      if (duplicateRepo) {
+        toast.warning("Repository already exists.");
+        setDuplicateRepoCandidate({ repo: trimmedRepo, owner: trimmedOwner });
+        setIsDuplicateRepoDialogOpen(true);
+        throw new Error("Repository already exists");
+      }
+    }
+
+    try {
       const reqPayload: AddRepositoriesApiRequest = {
         userId: user.id,
-        repo,
-        owner,
+        repo: trimmedRepo,
+        owner: trimmedOwner,
+        force,
       };
 
       const response = await apiRequest<AddRepositoriesApiResponse>(
@@ -642,20 +685,28 @@ export default function Repository() {
       );
 
       if (response.success) {
-        toast.success(`Repository added successfully`);
-        setRepositories((prevRepos) => [...prevRepos, response.repository]);
+        const message = force
+          ? "Repository already exists; metadata refreshed."
+          : "Repository added successfully";
+        toast.success(message);
 
-        await fetchRepositories(false); // Manual refresh after adding repository
+        await fetchRepositories(false);
 
         setFilter((prev) => ({
           ...prev,
-          searchTerm: repo,
+          searchTerm: trimmedRepo,
         }));
+
+        if (force) {
+          setDuplicateRepoCandidate(null);
+          setIsDuplicateRepoDialogOpen(false);
+        }
       } else {
         showErrorToast(response.error || "Error adding repository", toast);
       }
     } catch (error) {
       showErrorToast(error, toast);
+      throw error;
     }
   };
 
@@ -672,6 +723,71 @@ export default function Repository() {
         .filter((v): v is string => !!v)
     )
   ).sort();
+
+  const handleConfirmDuplicateRepository = async () => {
+    if (!duplicateRepoCandidate) {
+      return;
+    }
+
+    setIsProcessingDuplicateRepo(true);
+    try {
+      await handleAddRepository({
+        repo: duplicateRepoCandidate.repo,
+        owner: duplicateRepoCandidate.owner,
+        force: true,
+      });
+      setIsDialogOpen(false);
+    } catch (error) {
+      // Error already shown
+    } finally {
+      setIsProcessingDuplicateRepo(false);
+    }
+  };
+
+  const handleCancelDuplicateRepository = () => {
+    setDuplicateRepoCandidate(null);
+    setIsDuplicateRepoDialogOpen(false);
+  };
+
+  const handleRequestDeleteRepository = (repoId: string) => {
+    const repo = repositories.find((item) => item.id === repoId);
+    if (!repo) {
+      toast.error("Repository not found");
+      return;
+    }
+
+    setRepoToDelete(repo);
+    setIsDeleteRepoDialogOpen(true);
+  };
+
+  const handleDeleteRepository = async () => {
+    if (!user || !user.id || !repoToDelete) {
+      return;
+    }
+
+    setIsDeletingRepo(true);
+    try {
+      const response = await apiRequest<{ success: boolean; error?: string }>(
+        `/repositories/${repoToDelete.id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.success) {
+        toast.success(`Removed ${repoToDelete.fullName} from Gitea Mirror.`);
+        await fetchRepositories(false);
+      } else {
+        showErrorToast(response.error || "Failed to delete repository", toast);
+      }
+    } catch (error) {
+      showErrorToast(error, toast);
+    } finally {
+      setIsDeletingRepo(false);
+      setIsDeleteRepoDialogOpen(false);
+      setRepoToDelete(null);
+    }
+  };
 
   // Determine what actions are available for selected repositories
   const getAvailableActions = () => {
@@ -1198,6 +1314,7 @@ export default function Repository() {
           onRefresh={async () => {
             await fetchRepositories(false);
           }}
+          onDelete={handleRequestDeleteRepository}
         />
       )}
 
@@ -1206,6 +1323,77 @@ export default function Repository() {
         isDialogOpen={isDialogOpen}
         setIsDialogOpen={setIsDialogOpen}
       />
+
+      <Dialog
+        open={isDuplicateRepoDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelDuplicateRepository();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Repository already exists</DialogTitle>
+            <DialogDescription>
+              {duplicateRepoCandidate ? `${duplicateRepoCandidate.owner}/${duplicateRepoCandidate.repo}` : "This repository"} is already tracked in Gitea Mirror. Continuing will refresh the existing entry without creating a duplicate.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancelDuplicateRepository} disabled={isProcessingDuplicateRepo}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmDuplicateRepository} disabled={isProcessingDuplicateRepo}>
+              {isProcessingDuplicateRepo ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                "Continue"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isDeleteRepoDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setIsDeleteRepoDialogOpen(false);
+            setRepoToDelete(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove repository from Gitea Mirror?</DialogTitle>
+            <DialogDescription>
+              {repoToDelete?.fullName ?? "This repository"} will be deleted from Gitea Mirror only. The mirror on Gitea will remain untouched; remove it manually in Gitea if needed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDeleteRepoDialogOpen(false);
+                setRepoToDelete(null);
+              }}
+              disabled={isDeletingRepo}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteRepository} disabled={isDeletingRepo}>
+              {isDeletingRepo ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </span>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

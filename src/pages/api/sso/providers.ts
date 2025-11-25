@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/utils/auth-helpers";
 import { db, ssoProviders } from "@/lib/db";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
+import { normalizeOidcProviderConfig, OidcConfigError, type RawOidcConfig } from "@/lib/sso/oidc-config";
 
 // GET /api/sso/providers - List all SSO providers
 export async function GET(context: APIContext) {
@@ -45,10 +46,12 @@ export async function POST(context: APIContext) {
       tokenEndpoint,
       jwksEndpoint,
       userInfoEndpoint,
+      discoveryEndpoint,
       mapping,
       providerId,
       organizationId,
       scopes,
+      pkce,
     } = body;
 
     // Validate required fields
@@ -79,22 +82,50 @@ export async function POST(context: APIContext) {
       );
     }
 
-    // Create OIDC config object
-    const oidcConfig = {
-      clientId,
-      clientSecret,
-      authorizationEndpoint,
-      tokenEndpoint,
-      jwksEndpoint,
-      userInfoEndpoint,
-      scopes: scopes || ["openid", "email", "profile"],
-      mapping: mapping || {
-        id: "sub",
-        email: "email",
-        emailVerified: "email_verified",
-        name: "name",
-        image: "picture",
-      },
+    // Validate issuer URL format but keep trailing slash if provided
+    const trimmedIssuer = issuer.toString().trim();
+    try {
+      new URL(trimmedIssuer);
+    } catch {
+      return new Response(
+        JSON.stringify({ error: `Invalid issuer URL format: ${issuer}` }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    let normalized;
+    try {
+      normalized = await normalizeOidcProviderConfig(trimmedIssuer, {
+        clientId,
+        clientSecret,
+        authorizationEndpoint,
+        tokenEndpoint,
+        jwksEndpoint,
+        userInfoEndpoint,
+        discoveryEndpoint,
+        scopes,
+        pkce,
+        mapping,
+      });
+    } catch (error) {
+      if (error instanceof OidcConfigError) {
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      throw error;
+    }
+
+    const storedOidcConfig = {
+      ...normalized.oidcConfig,
+      mapping: normalized.mapping,
     };
 
     // Insert new provider
@@ -102,9 +133,9 @@ export async function POST(context: APIContext) {
       .insert(ssoProviders)
       .values({
         id: nanoid(),
-        issuer,
+        issuer: trimmedIssuer,
         domain,
-        oidcConfig: JSON.stringify(oidcConfig),
+        oidcConfig: JSON.stringify(storedOidcConfig),
         userId: user.id,
         providerId,
         organizationId,
@@ -156,7 +187,9 @@ export async function PUT(context: APIContext) {
       tokenEndpoint,
       jwksEndpoint,
       userInfoEndpoint,
+      discoveryEndpoint,
       scopes,
+      pkce,
       organizationId,
     } = body;
 
@@ -179,26 +212,60 @@ export async function PUT(context: APIContext) {
 
     // Parse existing config
     const existingConfig = JSON.parse(existingProvider.oidcConfig);
+    const effectiveIssuer = issuer?.toString().trim() || existingProvider.issuer;
 
-    // Create updated OIDC config
-    const updatedOidcConfig = {
-      ...existingConfig,
-      clientId: clientId || existingConfig.clientId,
-      clientSecret: clientSecret || existingConfig.clientSecret,
-      authorizationEndpoint: authorizationEndpoint || existingConfig.authorizationEndpoint,
-      tokenEndpoint: tokenEndpoint || existingConfig.tokenEndpoint,
-      jwksEndpoint: jwksEndpoint || existingConfig.jwksEndpoint,
-      userInfoEndpoint: userInfoEndpoint || existingConfig.userInfoEndpoint,
-      scopes: scopes || existingConfig.scopes || ["openid", "email", "profile"],
+    try {
+      new URL(effectiveIssuer);
+    } catch {
+      return new Response(
+        JSON.stringify({ error: `Invalid issuer URL format: ${effectiveIssuer}` }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const mergedConfig: RawOidcConfig = {
+      clientId: clientId ?? existingConfig.clientId,
+      clientSecret: clientSecret ?? existingConfig.clientSecret,
+      authorizationEndpoint: authorizationEndpoint ?? existingConfig.authorizationEndpoint,
+      tokenEndpoint: tokenEndpoint ?? existingConfig.tokenEndpoint,
+      jwksEndpoint: jwksEndpoint ?? existingConfig.jwksEndpoint,
+      userInfoEndpoint: userInfoEndpoint ?? existingConfig.userInfoEndpoint,
+      discoveryEndpoint: discoveryEndpoint ?? existingConfig.discoveryEndpoint,
+      scopes: scopes ?? existingConfig.scopes,
+      pkce: pkce ?? existingConfig.pkce,
+      mapping: existingConfig.mapping,
     };
 
-    // Update provider
+    let normalized;
+    try {
+      normalized = await normalizeOidcProviderConfig(effectiveIssuer, mergedConfig);
+    } catch (error) {
+      if (error instanceof OidcConfigError) {
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+      throw error;
+    }
+
+    const storedOidcConfig = {
+      ...normalized.oidcConfig,
+      mapping: normalized.mapping,
+    };
+
     const [updatedProvider] = await db
       .update(ssoProviders)
       .set({
-        issuer: issuer || existingProvider.issuer,
+        issuer: effectiveIssuer,
         domain: domain || existingProvider.domain,
-        oidcConfig: JSON.stringify(updatedOidcConfig),
+        oidcConfig: JSON.stringify(storedOidcConfig),
         organizationId: organizationId !== undefined ? organizationId : existingProvider.organizationId,
         updatedAt: new Date(),
       })

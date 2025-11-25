@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, RefreshCw, Building2, Check, AlertCircle, Clock, MoreVertical, Ban, Star } from "lucide-react";
+import { Plus, RefreshCw, Building2, Check, AlertCircle, Clock, MoreVertical, Ban, Star, Trash2 } from "lucide-react";
 import { SiGithub, SiGitea } from "react-icons/si";
 import type { Organization } from "@/lib/db/schema";
 import type { FilterParams } from "@/types/filter";
@@ -30,6 +30,7 @@ interface OrganizationListProps {
   loadingOrgIds: Set<string>;
   onAddOrganization?: () => void;
   onRefresh?: () => Promise<void>;
+  onDelete?: (orgId: string) => void;
 }
 
 // Helper function to get status badge variant and icon
@@ -60,6 +61,7 @@ export function OrganizationList({
   loadingOrgIds,
   onAddOrganization,
   onRefresh,
+  onDelete,
 }: OrganizationListProps) {
   const { giteaConfig } = useGiteaConfig();
   
@@ -436,7 +438,7 @@ export function OrganizationList({
                 )}
                 
                 {/* Dropdown menu for additional actions */}
-                {org.status !== "ignored" && org.status !== "mirroring" && (
+                {org.status !== "mirroring" && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" disabled={isLoading} className="h-10 w-10">
@@ -444,12 +446,26 @@ export function OrganizationList({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem 
-                        onClick={() => org.id && onIgnore && onIgnore({ orgId: org.id, ignore: true })}
-                      >
-                        <Ban className="h-4 w-4 mr-2" />
-                        Ignore Organization
-                      </DropdownMenuItem>
+                      {org.status !== "ignored" && (
+                        <DropdownMenuItem 
+                          onClick={() => org.id && onIgnore && onIgnore({ orgId: org.id, ignore: true })}
+                        >
+                          <Ban className="h-4 w-4 mr-2" />
+                          Ignore Organization
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <>
+                          {org.status !== "ignored" && <DropdownMenuSeparator />}
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => org.id && onDelete(org.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete from Mirror
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -583,7 +599,7 @@ export function OrganizationList({
                 )}
                 
                 {/* Dropdown menu for additional actions */}
-                {org.status !== "ignored" && org.status !== "mirroring" && (
+                {org.status !== "mirroring" && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" disabled={isLoading}>
@@ -591,12 +607,26 @@ export function OrganizationList({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem 
-                        onClick={() => org.id && onIgnore && onIgnore({ orgId: org.id, ignore: true })}
-                      >
-                        <Ban className="h-4 w-4 mr-2" />
-                        Ignore Organization
-                      </DropdownMenuItem>
+                      {org.status !== "ignored" && (
+                        <DropdownMenuItem 
+                          onClick={() => org.id && onIgnore && onIgnore({ orgId: org.id, ignore: true })}
+                        >
+                          <Ban className="h-4 w-4 mr-2" />
+                          Ignore Organization
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <>
+                          {org.status !== "ignored" && <DropdownMenuSeparator />}
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => org.id && onDelete(org.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete from Mirror
+                          </DropdownMenuItem>
+                        </>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}

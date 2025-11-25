@@ -81,6 +81,26 @@ Replace `{provider-id}` with your chosen Provider ID.
    - Client Secret: [Your Okta Client Secret]
    - Click "Discover" to auto-fill endpoints
 
+### Example: Authentik SSO Setup
+
+Working Authentik deployments (see [#134](https://github.com/RayLabsHQ/gitea-mirror/issues/134)) follow these steps:
+
+1. In Authentik, create a new **Application** and OIDC **Provider** (implicit flow works well for testing).
+2. Start creating an SSO provider inside Gitea Mirror so you can copy the redirect URL shown (`https://your-domain.com/api/auth/sso/callback/authentik` if you pick `authentik` as your Provider ID).
+3. Paste that redirect URL into the Authentik Provider configuration and finish creating the provider.
+4. Copy the Authentik issuer URL, client ID, and client secret.
+5. Back in Gitea Mirror:
+   - Issuer URL: the exact value from Authentik (keep any trailing slash Authentik shows).
+   - Provider ID: match the one you used in step 2.
+   - Click **Discover** so Gitea Mirror stores the authorization, token, and JWKS endpoints (Authentik publishes them via discovery).
+   - Domain: enter the email domain you expect to match (e.g. `example.com`).
+6. Save the provider and test the login flow.
+
+Notes:
+- Make sure `BETTER_AUTH_URL` and (if you serve the UI from multiple origins) `BETTER_AUTH_TRUSTED_ORIGINS` point at the public URL users reach. A mismatch can surface as 500 errors after redirect.
+- Authentik must report the user’s email as verified (default behavior) so Gitea Mirror can auto-link accounts.
+- If you created an Authentik provider before v3.8.10 you should delete it and re-add it after upgrading; older versions saved incomplete endpoint data which leads to the `url.startsWith` error explained in the Troubleshooting section.
+
 ## Setting up OIDC Provider
 
 The OIDC Provider feature allows other applications to use Gitea Mirror as their authentication provider.
@@ -165,6 +185,7 @@ When an application requests authentication:
 1. **"Invalid origin" error**: Check that your Gitea Mirror URL matches the configured redirect URI
 2. **"Provider not found" error**: Ensure the provider is properly configured and enabled
 3. **Redirect loop**: Verify the redirect URI in both Gitea Mirror and the SSO provider match exactly
+4. **`TypeError: undefined is not an object (evaluating 'url.startsWith')`**: This indicates the stored provider configuration is missing OIDC endpoints. Delete the provider from Gitea Mirror and re-register it using the **Discover** button so authorization/token URLs are saved (see [#73](https://github.com/RayLabsHQ/gitea-mirror/issues/73) and [#122](https://github.com/RayLabsHQ/gitea-mirror/issues/122) for examples).
 
 ### OIDC Provider Issues
 

@@ -12,6 +12,11 @@ import { createMirrorJob } from "./helpers";
 import { db, organizations, repositories } from "./db";
 import { eq, and } from "drizzle-orm";
 import { decryptConfigTokens } from "./utils/config-encryption";
+import { formatDateShort } from "./utils";
+import {
+  parseRepositoryMetadataState,
+  serializeRepositoryMetadataState,
+} from "./metadata-state";
 
 /**
  * Helper function to get organization configuration including destination override
@@ -220,6 +225,96 @@ export const isRepoPresentInGitea = async ({
 };
 
 /**
+ * Check if a repository is currently being mirrored (in-progress state in database)
+ * This prevents race conditions where multiple concurrent operations try to mirror the same repo
+ */
+export const isRepoCurrentlyMirroring = async ({
+  config,
+  repoName,
+  expectedLocation,
+}: {
+  config: Partial<Config>;
+  repoName: string;
+  expectedLocation?: string; // Format: "owner/repo"
+}): Promise<boolean> => {
+  try {
+    if (!config.userId) {
+      return false;
+    }
+
+    const { or } = await import("drizzle-orm");
+
+    // Check database for any repository with "mirroring" or "syncing" status
+    const inProgressRepos = await db
+      .select()
+      .from(repositories)
+      .where(
+        and(
+          eq(repositories.userId, config.userId),
+          eq(repositories.name, repoName),
+          // Check for in-progress statuses
+          or(
+            eq(repositories.status, "mirroring"),
+            eq(repositories.status, "syncing")
+          )
+        )
+      );
+
+    if (inProgressRepos.length > 0) {
+      // Check if any of the in-progress repos are stale (stuck for > 2 hours)
+      const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+      const now = new Date().getTime();
+
+      const activeRepos = inProgressRepos.filter((repo) => {
+        if (!repo.updatedAt) return true; // No timestamp, assume active
+        const updatedTime = new Date(repo.updatedAt).getTime();
+        const isStale = (now - updatedTime) > TWO_HOURS_MS;
+
+        if (isStale) {
+          console.warn(
+            `[Idempotency] Repository ${repo.name} has been in "${repo.status}" status for over 2 hours. ` +
+            `Considering it stale and allowing retry.`
+          );
+        }
+
+        return !isStale;
+      });
+
+      if (activeRepos.length === 0) {
+        console.log(
+          `[Idempotency] All in-progress operations for ${repoName} are stale (>2h). Allowing retry.`
+        );
+        return false;
+      }
+
+      // If we have an expected location, verify it matches
+      if (expectedLocation) {
+        const matchingRepo = activeRepos.find(
+          (repo) => repo.mirroredLocation === expectedLocation
+        );
+        if (matchingRepo) {
+          console.log(
+            `[Idempotency] Repository ${repoName} is already being mirrored at ${expectedLocation}`
+          );
+          return true;
+        }
+      } else {
+        console.log(
+          `[Idempotency] Repository ${repoName} is already being mirrored (${activeRepos.length} in-progress operations found)`
+        );
+        return true;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Error checking if repo is currently mirroring:", error);
+    console.error("Error details:", error);
+    return false;
+  }
+};
+
+/**
  * Helper function to check if a repository exists in Gitea.
  * First checks the recorded mirroredLocation, then falls back to the expected location.
  */
@@ -295,11 +390,11 @@ export const mirrorGithubRepoToGitea = async ({
 
     // Determine the actual repository name to use (handle duplicates for starred repos)
     let targetRepoName = repository.name;
-    
+
     if (repository.isStarred && config.githubConfig) {
       // Extract GitHub owner from full_name (format: owner/repo)
       const githubOwner = repository.fullName.split('/')[0];
-      
+
       targetRepoName = await generateUniqueRepoName({
         config,
         orgName: repoOwner,
@@ -307,12 +402,29 @@ export const mirrorGithubRepoToGitea = async ({
         githubOwner,
         strategy: config.githubConfig.starredDuplicateStrategy,
       });
-      
+
       if (targetRepoName !== repository.name) {
         console.log(
           `Starred repo ${repository.fullName} will be mirrored as ${repoOwner}/${targetRepoName} to avoid naming conflict`
         );
       }
+    }
+
+    // IDEMPOTENCY CHECK: Check if this repo is already being mirrored
+    const expectedLocation = `${repoOwner}/${targetRepoName}`;
+    const isCurrentlyMirroring = await isRepoCurrentlyMirroring({
+      config,
+      repoName: targetRepoName,
+      expectedLocation,
+    });
+
+    if (isCurrentlyMirroring) {
+      console.log(
+        `[Idempotency] Skipping ${repository.fullName} - already being mirrored to ${expectedLocation}`
+      );
+
+      // Don't throw an error, just return to allow other repos to continue
+      return;
     }
 
     const isExisting = await isRepoPresentInGitea({
@@ -356,11 +468,30 @@ export const mirrorGithubRepoToGitea = async ({
 
     console.log(`Mirroring repository ${repository.name}`);
 
+    // DOUBLE-CHECK: Final idempotency check right before updating status
+    // This catches race conditions in the small window between first check and status update
+    const finalCheck = await isRepoCurrentlyMirroring({
+      config,
+      repoName: targetRepoName,
+      expectedLocation,
+    });
+
+    if (finalCheck) {
+      console.log(
+        `[Idempotency] Race condition detected - ${repository.fullName} is now being mirrored by another process. Skipping.`
+      );
+      return;
+    }
+
     // Mark repos as "mirroring" in DB
+    // CRITICAL: Set mirroredLocation NOW (not after success) so idempotency checks work
+    // This becomes the "target location" - where we intend to mirror to
+    // Without this, the idempotency check can't detect concurrent operations on first mirror
     await db
       .update(repositories)
       .set({
         status: repoStatusEnum.parse("mirroring"),
+        mirroredLocation: expectedLocation,
         updatedAt: new Date(),
       })
       .where(eq(repositories.id, repository.id!));
@@ -479,12 +610,18 @@ export const mirrorGithubRepoToGitea = async ({
       }
     );
 
-    //mirror releases
-    // Skip releases for starred repos if starredCodeOnly is enabled
-    const shouldMirrorReleases = config.giteaConfig?.mirrorReleases &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const metadataState = parseRepositoryMetadataState(repository.metadata);
+    let metadataUpdated = false;
+    const skipMetadataForStarred =
+      repository.isStarred && config.githubConfig?.starredCodeOnly;
 
-    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`);
+    // Mirror releases if enabled (always allowed to rerun for updates)
+    const shouldMirrorReleases =
+      !!config.giteaConfig?.mirrorReleases && !skipMetadataForStarred;
+
+    console.log(
+      `[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`
+    );
 
     if (shouldMirrorReleases) {
       try {
@@ -495,21 +632,32 @@ export const mirrorGithubRepoToGitea = async ({
           giteaOwner: repoOwner,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored releases for ${repository.name}`);
+        metadataState.components.releases = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored releases for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror releases for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror releases for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other operations even if releases fail
       }
     }
 
-    // clone issues
-    // Skip issues for starred repos if starredCodeOnly is enabled
-    const shouldMirrorIssues = config.giteaConfig?.mirrorIssues && 
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
-    
-    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssues}`);
-    
-    if (shouldMirrorIssues) {
+    // Determine metadata operations to avoid duplicates
+    const shouldMirrorIssuesThisRun =
+      !!config.giteaConfig?.mirrorIssues &&
+      !skipMetadataForStarred &&
+      !metadataState.components.issues;
+
+    console.log(
+      `[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, alreadyMirrored=${metadataState.components.issues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssuesThisRun}`
+    );
+
+    if (shouldMirrorIssuesThisRun) {
       try {
         await mirrorGitRepoIssuesToGitea({
           config,
@@ -518,19 +666,34 @@ export const mirrorGithubRepoToGitea = async ({
           giteaOwner: repoOwner,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored issues for ${repository.name}`);
+        metadataState.components.issues = true;
+        metadataState.components.labels = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored issues for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror issues for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror issues for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if issues fail
       }
+    } else if (config.giteaConfig?.mirrorIssues && metadataState.components.issues) {
+      console.log(
+        `[Metadata] Issues already mirrored for ${repository.name}; skipping to avoid duplicates`
+      );
     }
 
-    // Mirror pull requests if enabled
-    // Skip pull requests for starred repos if starredCodeOnly is enabled
-    const shouldMirrorPullRequests = config.giteaConfig?.mirrorPullRequests &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorPullRequests =
+      !!config.giteaConfig?.mirrorPullRequests &&
+      !skipMetadataForStarred &&
+      !metadataState.components.pullRequests;
 
-    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`);
+    console.log(
+      `[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, alreadyMirrored=${metadataState.components.pullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`
+    );
 
     if (shouldMirrorPullRequests) {
       try {
@@ -541,19 +704,37 @@ export const mirrorGithubRepoToGitea = async ({
           giteaOwner: repoOwner,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored pull requests for ${repository.name}`);
+        metadataState.components.pullRequests = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored pull requests for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror pull requests for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror pull requests for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if PRs fail
       }
+    } else if (
+      config.giteaConfig?.mirrorPullRequests &&
+      metadataState.components.pullRequests
+    ) {
+      console.log(
+        `[Metadata] Pull requests already mirrored for ${repository.name}; skipping`
+      );
     }
 
-    // Mirror labels if enabled (and not already done via issues)
-    // Skip labels for starred repos if starredCodeOnly is enabled
-    const shouldMirrorLabels = config.giteaConfig?.mirrorLabels && !shouldMirrorIssues &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorLabels =
+      !!config.giteaConfig?.mirrorLabels &&
+      !skipMetadataForStarred &&
+      !shouldMirrorIssuesThisRun &&
+      !metadataState.components.labels;
 
-    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`);
+    console.log(
+      `[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, alreadyMirrored=${metadataState.components.labels}, issuesRunning=${shouldMirrorIssuesThisRun}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`
+    );
 
     if (shouldMirrorLabels) {
       try {
@@ -564,19 +745,33 @@ export const mirrorGithubRepoToGitea = async ({
           giteaOwner: repoOwner,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored labels for ${repository.name}`);
+        metadataState.components.labels = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored labels for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror labels for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror labels for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if labels fail
       }
+    } else if (config.giteaConfig?.mirrorLabels && metadataState.components.labels) {
+      console.log(
+        `[Metadata] Labels already mirrored for ${repository.name}; skipping`
+      );
     }
 
-    // Mirror milestones if enabled
-    // Skip milestones for starred repos if starredCodeOnly is enabled
-    const shouldMirrorMilestones = config.giteaConfig?.mirrorMilestones &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorMilestones =
+      !!config.giteaConfig?.mirrorMilestones &&
+      !skipMetadataForStarred &&
+      !metadataState.components.milestones;
 
-    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`);
+    console.log(
+      `[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, alreadyMirrored=${metadataState.components.milestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`
+    );
 
     if (shouldMirrorMilestones) {
       try {
@@ -587,11 +782,30 @@ export const mirrorGithubRepoToGitea = async ({
           giteaOwner: repoOwner,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored milestones for ${repository.name}`);
+        metadataState.components.milestones = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored milestones for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror milestones for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror milestones for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if milestones fail
       }
+    } else if (
+      config.giteaConfig?.mirrorMilestones &&
+      metadataState.components.milestones
+    ) {
+      console.log(
+        `[Metadata] Milestones already mirrored for ${repository.name}; skipping`
+      );
+    }
+
+    if (metadataUpdated) {
+      metadataState.lastSyncedAt = new Date().toISOString();
     }
 
     console.log(`Repository ${repository.name} mirrored successfully as ${targetRepoName}`);
@@ -605,6 +819,9 @@ export const mirrorGithubRepoToGitea = async ({
         lastMirrored: new Date(),
         errorMessage: null,
         mirroredLocation: `${repoOwner}/${targetRepoName}`,
+        metadata: metadataUpdated
+          ? serializeRepositoryMetadataState(metadataState)
+          : repository.metadata ?? null,
       })
       .where(eq(repositories.id, repository.id!));
 
@@ -700,32 +917,32 @@ async function generateUniqueRepoName({
   strategy?: string;
 }): Promise<string> {
   const duplicateStrategy = strategy || "suffix";
-  
+
   // First check if base name is available
   const baseExists = await isRepoPresentInGitea({
     config,
     owner: orgName,
     repoName: baseName,
   });
-  
+
   if (!baseExists) {
     return baseName;
   }
-  
+
   // Generate name based on strategy
   let candidateName: string;
   let attempt = 0;
   const maxAttempts = 10;
-  
+
   while (attempt < maxAttempts) {
     switch (duplicateStrategy) {
       case "prefix":
         // Prefix with owner: owner-reponame
-        candidateName = attempt === 0 
+        candidateName = attempt === 0
           ? `${githubOwner}-${baseName}`
           : `${githubOwner}-${baseName}-${attempt}`;
         break;
-        
+
       case "owner-org":
         // This would require creating sub-organizations, not supported in this PR
         // Fall back to suffix strategy
@@ -737,24 +954,31 @@ async function generateUniqueRepoName({
           : `${baseName}-${githubOwner}-${attempt}`;
         break;
     }
-    
+
     const exists = await isRepoPresentInGitea({
       config,
       owner: orgName,
       repoName: candidateName,
     });
-    
+
     if (!exists) {
       console.log(`Found unique name for duplicate starred repo: ${candidateName}`);
       return candidateName;
     }
-    
+
     attempt++;
   }
-  
-  // If all attempts failed, use timestamp as last resort
-  const timestamp = Date.now();
-  return `${baseName}-${githubOwner}-${timestamp}`;
+
+  // SECURITY FIX: Prevent infinite duplicate creation
+  // Instead of falling back to timestamp (which creates infinite duplicates),
+  // throw an error to prevent hundreds of duplicate repos
+  console.error(`Failed to find unique name for ${baseName} after ${maxAttempts} attempts`);
+  console.error(`Organization: ${orgName}, GitHub Owner: ${githubOwner}, Strategy: ${duplicateStrategy}`);
+  throw new Error(
+    `Unable to generate unique repository name for "${baseName}". ` +
+    `All ${maxAttempts} naming attempts resulted in conflicts. ` +
+    `Please manually resolve the naming conflict or adjust your duplicate strategy.`
+  );
 }
 
 export async function mirrorGitHubRepoToGiteaOrg({
@@ -784,11 +1008,11 @@ export async function mirrorGitHubRepoToGiteaOrg({
 
     // Determine the actual repository name to use (handle duplicates for starred repos)
     let targetRepoName = repository.name;
-    
+
     if (repository.isStarred && config.githubConfig) {
       // Extract GitHub owner from full_name (format: owner/repo)
       const githubOwner = repository.fullName.split('/')[0];
-      
+
       targetRepoName = await generateUniqueRepoName({
         config,
         orgName,
@@ -796,12 +1020,29 @@ export async function mirrorGitHubRepoToGiteaOrg({
         githubOwner,
         strategy: config.githubConfig.starredDuplicateStrategy,
       });
-      
+
       if (targetRepoName !== repository.name) {
         console.log(
           `Starred repo ${repository.fullName} will be mirrored as ${orgName}/${targetRepoName} to avoid naming conflict`
         );
       }
+    }
+
+    // IDEMPOTENCY CHECK: Check if this repo is already being mirrored
+    const expectedLocation = `${orgName}/${targetRepoName}`;
+    const isCurrentlyMirroring = await isRepoCurrentlyMirroring({
+      config,
+      repoName: targetRepoName,
+      expectedLocation,
+    });
+
+    if (isCurrentlyMirroring) {
+      console.log(
+        `[Idempotency] Skipping ${repository.fullName} - already being mirrored to ${expectedLocation}`
+      );
+
+      // Don't throw an error, just return to allow other repos to continue
+      return;
     }
 
     const isExisting = await isRepoPresentInGitea({
@@ -850,11 +1091,30 @@ export async function mirrorGitHubRepoToGiteaOrg({
     // Use clean clone URL without embedded credentials (Forgejo 12+ security requirement)
     const cloneAddress = repository.cloneUrl;
 
+    // DOUBLE-CHECK: Final idempotency check right before updating status
+    // This catches race conditions in the small window between first check and status update
+    const finalCheck = await isRepoCurrentlyMirroring({
+      config,
+      repoName: targetRepoName,
+      expectedLocation,
+    });
+
+    if (finalCheck) {
+      console.log(
+        `[Idempotency] Race condition detected - ${repository.fullName} is now being mirrored by another process. Skipping.`
+      );
+      return;
+    }
+
     // Mark repos as "mirroring" in DB
+    // CRITICAL: Set mirroredLocation NOW (not after success) so idempotency checks work
+    // This becomes the "target location" - where we intend to mirror to
+    // Without this, the idempotency check can't detect concurrent operations on first mirror
     await db
       .update(repositories)
       .set({
         status: repoStatusEnum.parse("mirroring"),
+        mirroredLocation: expectedLocation,
         updatedAt: new Date(),
       })
       .where(eq(repositories.id, repository.id!));
@@ -902,12 +1162,17 @@ export async function mirrorGitHubRepoToGiteaOrg({
       }
     );
 
-    //mirror releases
-    // Skip releases for starred repos if starredCodeOnly is enabled
-    const shouldMirrorReleases = config.giteaConfig?.mirrorReleases &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const metadataState = parseRepositoryMetadataState(repository.metadata);
+    let metadataUpdated = false;
+    const skipMetadataForStarred =
+      repository.isStarred && config.githubConfig?.starredCodeOnly;
 
-    console.log(`[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`);
+    const shouldMirrorReleases =
+      !!config.giteaConfig?.mirrorReleases && !skipMetadataForStarred;
+
+    console.log(
+      `[Metadata] Release mirroring check: mirrorReleases=${config.giteaConfig?.mirrorReleases}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorReleases=${shouldMirrorReleases}`
+    );
 
     if (shouldMirrorReleases) {
       try {
@@ -918,21 +1183,31 @@ export async function mirrorGitHubRepoToGiteaOrg({
           giteaOwner: orgName,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored releases for ${repository.name}`);
+        metadataState.components.releases = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored releases for ${repository.name}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror releases for ${repository.name}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror releases for ${repository.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other operations even if releases fail
       }
     }
 
-    // Clone issues
-    // Skip issues for starred repos if starredCodeOnly is enabled
-    const shouldMirrorIssues = config.giteaConfig?.mirrorIssues && 
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
-    
-    console.log(`[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssues}`);
-    
-    if (shouldMirrorIssues) {
+    const shouldMirrorIssuesThisRun =
+      !!config.giteaConfig?.mirrorIssues &&
+      !skipMetadataForStarred &&
+      !metadataState.components.issues;
+
+    console.log(
+      `[Metadata] Issue mirroring check: mirrorIssues=${config.giteaConfig?.mirrorIssues}, alreadyMirrored=${metadataState.components.issues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorIssues=${shouldMirrorIssuesThisRun}`
+    );
+
+    if (shouldMirrorIssuesThisRun) {
       try {
         await mirrorGitRepoIssuesToGitea({
           config,
@@ -941,19 +1216,37 @@ export async function mirrorGitHubRepoToGiteaOrg({
           giteaOwner: orgName,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored issues for ${repository.name} to org ${orgName}/${targetRepoName}`);
+        metadataState.components.issues = true;
+        metadataState.components.labels = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored issues for ${repository.name} to org ${orgName}/${targetRepoName}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror issues for ${repository.name} to org ${orgName}/${targetRepoName}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror issues for ${repository.name} to org ${orgName}/${targetRepoName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if issues fail
       }
+    } else if (
+      config.giteaConfig?.mirrorIssues &&
+      metadataState.components.issues
+    ) {
+      console.log(
+        `[Metadata] Issues already mirrored for ${repository.name}; skipping`
+      );
     }
 
-    // Mirror pull requests if enabled
-    // Skip pull requests for starred repos if starredCodeOnly is enabled
-    const shouldMirrorPullRequests = config.giteaConfig?.mirrorPullRequests &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorPullRequests =
+      !!config.giteaConfig?.mirrorPullRequests &&
+      !skipMetadataForStarred &&
+      !metadataState.components.pullRequests;
 
-    console.log(`[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`);
+    console.log(
+      `[Metadata] Pull request mirroring check: mirrorPullRequests=${config.giteaConfig?.mirrorPullRequests}, alreadyMirrored=${metadataState.components.pullRequests}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorPullRequests=${shouldMirrorPullRequests}`
+    );
 
     if (shouldMirrorPullRequests) {
       try {
@@ -964,19 +1257,37 @@ export async function mirrorGitHubRepoToGiteaOrg({
           giteaOwner: orgName,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored pull requests for ${repository.name} to org ${orgName}/${targetRepoName}`);
+        metadataState.components.pullRequests = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored pull requests for ${repository.name} to org ${orgName}/${targetRepoName}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror pull requests for ${repository.name} to org ${orgName}/${targetRepoName}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror pull requests for ${repository.name} to org ${orgName}/${targetRepoName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if PRs fail
       }
+    } else if (
+      config.giteaConfig?.mirrorPullRequests &&
+      metadataState.components.pullRequests
+    ) {
+      console.log(
+        `[Metadata] Pull requests already mirrored for ${repository.name}; skipping`
+      );
     }
 
-    // Mirror labels if enabled (and not already done via issues)
-    // Skip labels for starred repos if starredCodeOnly is enabled
-    const shouldMirrorLabels = config.giteaConfig?.mirrorLabels && !shouldMirrorIssues &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorLabels =
+      !!config.giteaConfig?.mirrorLabels &&
+      !skipMetadataForStarred &&
+      !shouldMirrorIssuesThisRun &&
+      !metadataState.components.labels;
 
-    console.log(`[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, shouldMirrorIssues=${shouldMirrorIssues}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`);
+    console.log(
+      `[Metadata] Label mirroring check: mirrorLabels=${config.giteaConfig?.mirrorLabels}, alreadyMirrored=${metadataState.components.labels}, issuesRunning=${shouldMirrorIssuesThisRun}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorLabels=${shouldMirrorLabels}`
+    );
 
     if (shouldMirrorLabels) {
       try {
@@ -987,19 +1298,36 @@ export async function mirrorGitHubRepoToGiteaOrg({
           giteaOwner: orgName,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored labels for ${repository.name} to org ${orgName}/${targetRepoName}`);
+        metadataState.components.labels = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored labels for ${repository.name} to org ${orgName}/${targetRepoName}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror labels for ${repository.name} to org ${orgName}/${targetRepoName}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror labels for ${repository.name} to org ${orgName}/${targetRepoName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if labels fail
       }
+    } else if (
+      config.giteaConfig?.mirrorLabels &&
+      metadataState.components.labels
+    ) {
+      console.log(
+        `[Metadata] Labels already mirrored for ${repository.name}; skipping`
+      );
     }
 
-    // Mirror milestones if enabled
-    // Skip milestones for starred repos if starredCodeOnly is enabled
-    const shouldMirrorMilestones = config.giteaConfig?.mirrorMilestones &&
-      !(repository.isStarred && config.githubConfig?.starredCodeOnly);
+    const shouldMirrorMilestones =
+      !!config.giteaConfig?.mirrorMilestones &&
+      !skipMetadataForStarred &&
+      !metadataState.components.milestones;
 
-    console.log(`[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`);
+    console.log(
+      `[Metadata] Milestone mirroring check: mirrorMilestones=${config.giteaConfig?.mirrorMilestones}, alreadyMirrored=${metadataState.components.milestones}, isStarred=${repository.isStarred}, starredCodeOnly=${config.githubConfig?.starredCodeOnly}, shouldMirrorMilestones=${shouldMirrorMilestones}`
+    );
 
     if (shouldMirrorMilestones) {
       try {
@@ -1010,11 +1338,30 @@ export async function mirrorGitHubRepoToGiteaOrg({
           giteaOwner: orgName,
           giteaRepoName: targetRepoName,
         });
-        console.log(`[Metadata] Successfully mirrored milestones for ${repository.name} to org ${orgName}/${targetRepoName}`);
+        metadataState.components.milestones = true;
+        metadataUpdated = true;
+        console.log(
+          `[Metadata] Successfully mirrored milestones for ${repository.name} to org ${orgName}/${targetRepoName}`
+        );
       } catch (error) {
-        console.error(`[Metadata] Failed to mirror milestones for ${repository.name} to org ${orgName}/${targetRepoName}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(
+          `[Metadata] Failed to mirror milestones for ${repository.name} to org ${orgName}/${targetRepoName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         // Continue with other metadata operations even if milestones fail
       }
+    } else if (
+      config.giteaConfig?.mirrorMilestones &&
+      metadataState.components.milestones
+    ) {
+      console.log(
+        `[Metadata] Milestones already mirrored for ${repository.name}; skipping`
+      );
+    }
+
+    if (metadataUpdated) {
+      metadataState.lastSyncedAt = new Date().toISOString();
     }
 
     console.log(
@@ -1030,6 +1377,9 @@ export async function mirrorGitHubRepoToGiteaOrg({
         lastMirrored: new Date(),
         errorMessage: null,
         mirroredLocation: `${orgName}/${targetRepoName}`,
+        metadata: metadataUpdated
+          ? serializeRepositoryMetadataState(metadataState)
+          : repository.metadata ?? null,
       })
       .where(eq(repositories.id, repository.id!));
 
@@ -1408,6 +1758,8 @@ export const mirrorGitRepoIssuesToGitea = async ({
       repo,
       state: "all",
       per_page: 100,
+      sort: "created",
+      direction: "asc",
     },
     (res) => res.data
   );
@@ -1439,6 +1791,18 @@ export const mirrorGitRepoIssuesToGitea = async ({
 
   // Import the processWithRetry function
   const { processWithRetry } = await import("@/lib/utils/concurrency");
+
+  const rawIssueConcurrency = config.giteaConfig?.issueConcurrency ?? 3;
+  const issueConcurrencyLimit =
+    Number.isFinite(rawIssueConcurrency)
+      ? Math.max(1, Math.floor(rawIssueConcurrency))
+      : 1;
+
+  if (issueConcurrencyLimit > 1) {
+    console.warn(
+      `[Issues] Concurrency is set to ${issueConcurrencyLimit}. This may lead to out-of-order issue creation in Gitea but is faster.`
+    );
+  }
 
   // Process issues in parallel with concurrency control
   await processWithRetry(
@@ -1482,11 +1846,15 @@ export const mirrorGitRepoIssuesToGitea = async ({
               .join(", ")} on GitHub.`
           : "";
 
+      const issueAuthor = issue.user?.login ?? "unknown";
+      const issueCreatedOn = formatDateShort(issue.created_at);
+      const issueOriginHeader = `Originally created by @${issueAuthor} on GitHub${
+        issueCreatedOn ? ` (${issueCreatedOn})` : ""
+      }.`;
+
       const issuePayload: any = {
         title: issue.title,
-        body: `Originally created by @${
-          issue.user?.login
-        } on GitHub.${originalAssignees}\n\n${issue.body || ""}`,
+        body: `${issueOriginHeader}${originalAssignees}\n\n${issue.body ?? ""}`,
         closed: issue.state === "closed",
         labels: giteaLabelIds,
       };
@@ -1512,15 +1880,30 @@ export const mirrorGitRepoIssuesToGitea = async ({
         (res) => res.data
       );
 
-      // Process comments in parallel with concurrency control
-      if (comments.length > 0) {
+      // Ensure comments are applied in chronological order to preserve discussion flow
+      const sortedComments = comments
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.created_at || 0).getTime() -
+            new Date(b.created_at || 0).getTime()
+        );
+
+      // Process comments sequentially to preserve historical ordering
+      if (sortedComments.length > 0) {
         await processWithRetry(
-          comments,
+          sortedComments,
           async (comment) => {
+            const commenter = comment.user?.login ?? "unknown";
+            const commentDate = formatDateShort(comment.created_at);
+            const commentHeader = `@${commenter} commented on GitHub${
+              commentDate ? ` (${commentDate})` : ""
+            }:`;
+
             await httpPost(
               `${config.giteaConfig!.url}/api/v1/repos/${giteaOwner}/${repoName}/issues/${createdIssue.data.number}/comments`,
               {
-                body: `@${comment.user?.login} commented on GitHub:\n\n${comment.body}`,
+                body: `${commentHeader}\n\n${comment.body ?? ""}`,
               },
               {
                 Authorization: `token ${decryptedConfig.giteaConfig!.token}`,
@@ -1529,7 +1912,7 @@ export const mirrorGitRepoIssuesToGitea = async ({
             return comment;
           },
           {
-            concurrencyLimit: 5,
+            concurrencyLimit: 1,
             maxRetries: 2,
             retryDelay: 1000,
             onRetry: (_comment, error, attempt) => {
@@ -1544,7 +1927,7 @@ export const mirrorGitRepoIssuesToGitea = async ({
       return issue;
     },
     {
-      concurrencyLimit: 3, // Process 3 issues at a time
+      concurrencyLimit: issueConcurrencyLimit,
       maxRetries: 2,
       retryDelay: 2000,
       onProgress: (completed, total, result) => {
@@ -1628,23 +2011,138 @@ export async function mirrorGitHubReleasesToGitea({
   let mirroredCount = 0;
   let skippedCount = 0;
 
-  // Sort releases by created_at to ensure we get the most recent ones
-  const sortedReleases = releases.data.sort((a, b) => 
-    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  ).slice(0, releaseLimit);
+  const getReleaseTimestamp = (release: typeof releases.data[number]) => {
+    // Use published_at first (when the release was published on GitHub)
+    // Fall back to created_at (when the git tag was created) only if published_at is missing
+    // This matches GitHub's sorting behavior and handles cases where multiple tags
+    // point to the same commit but have different publish dates
+    const sourceDate = release.published_at ?? release.created_at ?? "";
+    const timestamp = sourceDate ? new Date(sourceDate).getTime() : 0;
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
 
-  for (const release of sortedReleases) {
+  // Capture the latest releases, then process them oldest-to-newest so Gitea mirrors keep chronological order
+  const releasesToProcess = releases.data
+    .slice()
+    .sort((a, b) => getReleaseTimestamp(b) - getReleaseTimestamp(a))
+    .slice(0, releaseLimit)
+    .sort((a, b) => getReleaseTimestamp(a) - getReleaseTimestamp(b));
+
+  console.log(`[Releases] Processing ${releasesToProcess.length} releases in chronological order (oldest to newest by published date)`);
+  releasesToProcess.forEach((rel, idx) => {
+    const publishedDate = new Date(rel.published_at || rel.created_at);
+    const createdDate = new Date(rel.created_at);
+    const dateInfo = rel.published_at !== rel.created_at
+      ? `published ${publishedDate.toISOString()} (tag created ${createdDate.toISOString()})`
+      : `published ${publishedDate.toISOString()}`;
+    console.log(`[Releases] ${idx + 1}. ${rel.tag_name} - ${dateInfo}`);
+  });
+
+  // Check if existing releases in Gitea are in the wrong order
+  // If so, we need to delete and recreate them to fix the ordering
+  let needsRecreation = false;
+  try {
+    const existingReleasesResponse = await httpGet(
+      `${config.giteaConfig.url}/api/v1/repos/${repoOwner}/${repoName}/releases?per_page=100`,
+      {
+        Authorization: `token ${decryptedConfig.giteaConfig.token}`,
+      }
+    ).catch(() => null);
+
+    if (existingReleasesResponse && existingReleasesResponse.data && Array.isArray(existingReleasesResponse.data)) {
+      const existingReleases = existingReleasesResponse.data;
+
+      if (existingReleases.length > 0) {
+        console.log(`[Releases] Found ${existingReleases.length} existing releases in Gitea, checking chronological order...`);
+
+        // Create a map of tag_name to expected chronological index (0 = oldest, n = newest)
+        const expectedOrder = new Map<string, number>();
+        releasesToProcess.forEach((rel, idx) => {
+          expectedOrder.set(rel.tag_name, idx);
+        });
+
+        // Check if existing releases are in the correct order based on created_unix
+        // Gitea sorts by created_unix DESC, so newer releases should have higher created_unix values
+        const releasesThatShouldExist = existingReleases.filter(r => expectedOrder.has(r.tag_name));
+
+        if (releasesThatShouldExist.length > 1) {
+          for (let i = 0; i < releasesThatShouldExist.length - 1; i++) {
+            const current = releasesThatShouldExist[i];
+            const next = releasesThatShouldExist[i + 1];
+
+            const currentExpectedIdx = expectedOrder.get(current.tag_name)!;
+            const nextExpectedIdx = expectedOrder.get(next.tag_name)!;
+
+            // Since Gitea returns releases sorted by created_unix DESC:
+            // - Earlier releases in the list should have HIGHER expected indices (newer)
+            // - Later releases in the list should have LOWER expected indices (older)
+            if (currentExpectedIdx < nextExpectedIdx) {
+              console.log(`[Releases] ⚠️  Incorrect ordering detected: ${current.tag_name} (index ${currentExpectedIdx}) appears before ${next.tag_name} (index ${nextExpectedIdx})`);
+              needsRecreation = true;
+              break;
+            }
+          }
+        }
+
+        if (needsRecreation) {
+          console.log(`[Releases] ⚠️  Releases are in incorrect chronological order. Will delete and recreate all releases.`);
+
+          // Delete all existing releases that we're about to recreate
+          for (const existingRelease of releasesThatShouldExist) {
+            try {
+              console.log(`[Releases] Deleting incorrectly ordered release: ${existingRelease.tag_name}`);
+              await httpDelete(
+                `${config.giteaConfig.url}/api/v1/repos/${repoOwner}/${repoName}/releases/${existingRelease.id}`,
+                {
+                  Authorization: `token ${decryptedConfig.giteaConfig.token}`,
+                }
+              );
+            } catch (deleteError) {
+              console.error(`[Releases] Failed to delete release ${existingRelease.tag_name}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`);
+            }
+          }
+
+          console.log(`[Releases] ✅ Deleted ${releasesThatShouldExist.length} releases. Will recreate in correct chronological order.`);
+        } else {
+          console.log(`[Releases] ✅ Existing releases are in correct chronological order.`);
+        }
+      }
+    }
+  } catch (orderCheckError) {
+    console.warn(`[Releases] Could not verify release order: ${orderCheckError instanceof Error ? orderCheckError.message : String(orderCheckError)}`);
+    // Continue with normal processing
+  }
+
+  for (const release of releasesToProcess) {
     try {
-      // Check if release already exists
-      const existingReleasesResponse = await httpGet(
+      // Check if release already exists (skip check if we just deleted all releases)
+      const existingReleasesResponse = needsRecreation ? null : await httpGet(
         `${config.giteaConfig.url}/api/v1/repos/${repoOwner}/${repoName}/releases/tags/${release.tag_name}`,
         {
           Authorization: `token ${decryptedConfig.giteaConfig.token}`,
         }
       ).catch(() => null);
 
-      const releaseNote = release.body || "";
-      
+      // Prepare release body with GitHub original date header
+      const githubPublishedDate = release.published_at || release.created_at;
+      const githubTagCreatedDate = release.created_at;
+
+      let githubDateHeader = '';
+      if (githubPublishedDate) {
+        githubDateHeader = `> 📅 **Originally published on GitHub:** ${new Date(githubPublishedDate).toUTCString()}`;
+
+        // If the tag was created on a different date than the release was published,
+        // show both dates (helps with repos that create multiple tags from the same commit)
+        if (release.published_at && release.created_at && release.published_at !== release.created_at) {
+          githubDateHeader += `\n> 🏷️  **Git tag created:** ${new Date(githubTagCreatedDate).toUTCString()}`;
+        }
+
+        githubDateHeader += '\n\n';
+      }
+
+      const originalReleaseNote = release.body || "";
+      const releaseNote = githubDateHeader + originalReleaseNote;
+
       if (existingReleasesResponse) {
         // Update existing release if the changelog/body differs
         const existingRelease = existingReleasesResponse.data;
@@ -1667,9 +2165,11 @@ export async function mirrorGitHubReleasesToGitea({
               Authorization: `token ${decryptedConfig.giteaConfig.token}`,
             }
           );
-          
-          if (releaseNote) {
-            console.log(`[Releases] Updated changelog for ${release.tag_name} (${releaseNote.length} characters)`);
+
+          if (originalReleaseNote) {
+            console.log(`[Releases] Updated changelog for ${release.tag_name} (${originalReleaseNote.length} characters + GitHub date header)`);
+          } else {
+            console.log(`[Releases] Updated release ${release.tag_name} with GitHub date header`);
           }
           mirroredCount++;
         } else {
@@ -1679,9 +2179,11 @@ export async function mirrorGitHubReleasesToGitea({
         continue;
       }
 
-      // Create new release with changelog/body content
-      if (releaseNote) {
-        console.log(`[Releases] Including changelog for ${release.tag_name} (${releaseNote.length} characters)`);
+      // Create new release with changelog/body content (includes GitHub date header)
+      if (originalReleaseNote) {
+        console.log(`[Releases] Including changelog for ${release.tag_name} (${originalReleaseNote.length} characters + GitHub date header)`);
+      } else {
+        console.log(`[Releases] Creating release ${release.tag_name} with GitHub date header (no changelog)`);
       }
       
       const createReleaseResponse = await httpPost(
@@ -1749,8 +2251,14 @@ export async function mirrorGitHubReleasesToGitea({
       }
       
       mirroredCount++;
-      const noteInfo = releaseNote ? ` with ${releaseNote.length} character changelog` : " without changelog";
+      const noteInfo = originalReleaseNote ? ` with ${originalReleaseNote.length} character changelog` : " without changelog";
       console.log(`[Releases] Successfully mirrored release: ${release.tag_name}${noteInfo}`);
+
+      // Add delay to ensure proper timestamp ordering in Gitea
+      // Gitea sorts releases by created_unix DESC, and all releases created in quick succession
+      // will have nearly identical timestamps. The 1-second delay ensures proper chronological order.
+      console.log(`[Releases] Waiting 1 second to ensure proper timestamp ordering in Gitea...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`[Releases] Failed to mirror release ${release.tag_name}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1816,6 +2324,8 @@ export async function mirrorGitRepoPullRequestsToGitea({
       repo,
       state: "all",
       per_page: 100,
+      sort: "created",
+      direction: "asc",
     },
     (res) => res.data
   );
@@ -1871,6 +2381,18 @@ export async function mirrorGitRepoPullRequestsToGitea({
   }
 
   const { processWithRetry } = await import("@/lib/utils/concurrency");
+
+  const rawPullConcurrency = config.giteaConfig?.pullRequestConcurrency ?? 5;
+  const pullRequestConcurrencyLimit =
+    Number.isFinite(rawPullConcurrency)
+      ? Math.max(1, Math.floor(rawPullConcurrency))
+      : 1;
+
+  if (pullRequestConcurrencyLimit > 1) {
+    console.warn(
+      `[Pull Requests] Concurrency is set to ${pullRequestConcurrencyLimit}. This may lead to out-of-order pull request mirroring in Gitea.`
+    );
+  }
 
   let successCount = 0;
   let failedCount = 0;
@@ -1994,7 +2516,7 @@ export async function mirrorGitRepoPullRequestsToGitea({
       }
     },
     {
-      concurrencyLimit: 5,
+      concurrencyLimit: pullRequestConcurrencyLimit,
       maxRetries: 3,
       retryDelay: 1000,
     }
@@ -2286,7 +2808,11 @@ export async function archiveGiteaRepo(
       const currentName = repoResponse.data.name;
       
       // Skip if already marked as archived
-      if (currentName.startsWith('[ARCHIVED]')) {
+      const normalizedName = currentName.toLowerCase();
+      if (
+        currentName.startsWith('[ARCHIVED]') ||
+        normalizedName.startsWith('archived-')
+      ) {
         console.log(`[Archive] Repository ${owner}/${repo} already marked as archived. Skipping.`);
         return;
       }
@@ -2345,17 +2871,17 @@ export async function archiveGiteaRepo(
         await httpPatch(
           `${client.url}/api/v1/repos/${owner}/${archivedName}`,
           {
-            mirror_interval: "8760h", // 1 year - minimizes sync attempts
+            mirror_interval: "0h", // Disable automatic syncing; manual sync is still available
           },
           {
             Authorization: `token ${client.token}`,
             'Content-Type': 'application/json',
           }
         );
-        console.log(`[Archive] Reduced sync frequency for ${owner}/${archivedName} to yearly`);
+        console.log(`[Archive] Disabled automatic syncs for ${owner}/${archivedName}; manual sync only`);
       } catch (intervalError) {
         // Non-critical - repo is still preserved even if we can't change interval
-        console.debug(`[Archive] Could not update mirror interval (non-critical):`, intervalError);
+        console.debug(`[Archive] Could not disable mirror interval (non-critical):`, intervalError);
       }
     } else {
       // For non-mirror repositories, use Gitea's native archive feature

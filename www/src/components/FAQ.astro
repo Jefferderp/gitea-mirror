@@ -1,0 +1,138 @@
+---
+import { HelpCircle } from 'lucide-react';
+
+const faqs = [
+  {
+    question: "What is Gitea Mirror and why do I need it?",
+    answer: "Gitea Mirror is a self-hosted tool that automatically backs up your GitHub repositories to your own Gitea server. You need it because GitHub outages, account issues, or policy changes can lock you out of your code. With Gitea Mirror, you own your backups completely—no monthly fees, no third-party storage, just full control over your repository history, issues, pull requests, and releases."
+  },
+  {
+    question: "How is this different from BackHub or Rewind?",
+    answer: "BackHub and Rewind are cloud services that cost $600-2400/year and store your code on their servers. Gitea Mirror is free, open source, and runs on your own infrastructure. You pay $0/month and have complete data ownership. The tradeoff: you manage the infrastructure yourself, while cloud services are fully managed."
+  },
+  {
+    question: "Does Gitea Mirror backup issues, pull requests, and releases?",
+    answer: "Yes! Enable 'Mirror metadata' in settings to backup issues with comments, labels, and assignees. Pull requests are mirrored as enriched issues with full metadata, commit history, and file changes (Gitea's API doesn't support creating PRs from external sources). Releases, including binary assets, and wiki pages are also backed up when enabled."
+  },
+  {
+    question: "How long does setup take?",
+    answer: "15-20 minutes with Docker. Run 'docker compose -f docker-compose.alt.yml up -d', visit localhost:4321, create an account, paste your GitHub and Gitea tokens, select repos to backup—done. The Proxmox LXC one-liner is even faster. No complex configuration files or manual scripting required."
+  },
+  {
+    question: "What happens if GitHub goes down or I lose access?",
+    answer: "You can immediately clone from your Gitea server instead. Your local backups include full commit history, branches, tags, issues, releases—everything. Recovery time is typically under 2 minutes (just point git to your Gitea URL). This is why it's called disaster recovery, not just mirroring."
+  },
+  {
+    question: "How often does it sync with GitHub?",
+    answer: "Configurable from every 15 minutes to once per day (or longer). Most users choose 1-8 hours based on how fresh they want backups. The scheduler auto-discovers new repos and respects per-repo intervals, unlike Gitea's built-in mirroring which defaults to 24 hours."
+  },
+  {
+    question: "Can I backup starred repositories?",
+    answer: "Yes! Gitea Mirror can automatically backup all your GitHub stars into a dedicated Gitea organization. Perfect for preserving important open source projects before they disappear (projects get deleted, renamed, or removed all the time)."
+  },
+  {
+    question: "What are the system requirements?",
+    answer: "Minimal: 2 vCPU, 2GB RAM, 5-10GB storage (grows with repo count). Runs on Docker, Kubernetes, Proxmox LXC, or bare metal. Works on AMD64 and ARM64 (Raspberry Pi compatible). A small homelab server or cheap VPS is plenty for personal use."
+  },
+  {
+    question: "Is my GitHub token stored securely?",
+    answer: "Yes. All GitHub and Gitea tokens are encrypted at rest using AES-256-GCM. Even if someone gains access to the SQLite database, they can't read your tokens without the encryption key. Use the ENCRYPTION_SECRET environment variable for additional security."
+  },
+  {
+    question: "Can I backup private repositories?",
+    answer: "Absolutely. Just use a GitHub personal access token (classic) with 'repo' scope enabled. Gitea Mirror will backup all repositories you have access to—public, private, and internal."
+  },
+  {
+    question: "What if I have multiple GitHub organizations?",
+    answer: "Gitea Mirror supports multiple organizations with flexible destination strategies: preserve GitHub structure in Gitea, consolidate into a single org, or use mixed mode (personal repos in one place, org repos preserve structure). Edit individual organization destinations via the dashboard."
+  },
+  {
+    question: "Does it support Git LFS (large files)?",
+    answer: "Yes! Enable 'Mirror LFS' in settings. Make sure your Gitea server has LFS enabled (LFS_START_SERVER = true) and Git v2.1.2+. Large assets like videos, datasets, and binaries are backed up alongside your code."
+  },
+  {
+    question: "How do I restore from backup?",
+    answer: "Simple: 'git clone https://your-gitea-server/owner/repo.git'. Your full history, branches, and tags are there. For issues/PRs/releases, they're already in Gitea's web interface. For complete disaster recovery, restore the data volume to a fresh Gitea Mirror instance—everything (config, sync history) is preserved."
+  },
+  {
+    question: "Can I run this alongside a cloud backup service?",
+    answer: "Yes! Many users run Gitea Mirror for local/warm backups while using cloud services for offsite redundancy. Best of both worlds: instant local recovery and geographic disaster protection. Totally compatible."
+  },
+  {
+    question: "Is this enterprise-ready with SLA guarantees?",
+    answer: "No. Gitea Mirror is a community open source project—no 24/7 support, no compliance certifications, no guaranteed uptime. It's perfect for homelabs, indie developers, and small teams comfortable with self-hosting. If you need enterprise SLAs, consider commercial solutions like BackHub or GitHub Enterprise Backup."
+  }
+];
+
+// Generate FAQ schema for SEO
+const faqSchema = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": faqs.map(faq => ({
+    "@type": "Question",
+    "name": faq.question,
+    "acceptedAnswer": {
+      "@type": "Answer",
+      "text": faq.answer
+    }
+  }))
+};
+---
+
+<section id="faq" class="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 bg-muted/30">
+  <div class="max-w-4xl mx-auto">
+    <div class="text-center mb-12 sm:mb-16">
+      <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">
+        <HelpCircle className="w-4 h-4" />
+        FAQ
+      </span>
+      <h2 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">
+        Common Questions About GitHub Backups
+      </h2>
+      <p class="mt-4 text-base sm:text-lg text-muted-foreground">
+        Everything you need to know about self-hosted repository backups with Gitea Mirror.
+      </p>
+    </div>
+
+    <div class="space-y-4">
+      {faqs.map((faq, index) => (
+        <details class="group rounded-xl border bg-background/80 p-6 shadow-sm transition-all hover:shadow-md open:ring-1 open:ring-primary/20">
+          <summary class="flex cursor-pointer items-start justify-between gap-4 font-semibold text-foreground list-none">
+            <span class="text-left">{faq.question}</span>
+            <svg
+              class="h-5 w-5 flex-shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </summary>
+          <p class="mt-4 text-sm sm:text-base text-muted-foreground leading-relaxed">
+            {faq.answer}
+          </p>
+        </details>
+      ))}
+    </div>
+
+    <div class="mt-12 text-center">
+      <p class="text-sm text-muted-foreground">
+        Still have questions?
+        <a href="https://github.com/RayLabsHQ/gitea-mirror/discussions" class="text-primary hover:text-primary/80 font-medium transition-colors ml-1">
+          Ask in our GitHub Discussions
+        </a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ Schema for SEO -->
+<script type="application/ld+json" set:html={JSON.stringify(faqSchema)} />
+
+<style>
+  details summary::-webkit-details-marker {
+    display: none;
+  }
+
+</style>

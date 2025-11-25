@@ -14,6 +14,9 @@ export interface GiteaConfig {
   mirrorStrategy?: MirrorStrategy; // New field for the strategy
   personalReposOrg?: string; // Override destination for personal repos
   starredReposStrategy?: "single-organization" | "preserve-structure"; // Strategy for organizing starred repos
+  issueConcurrency?: number;
+  pullRequestConcurrency?: number;
+
 }
 
 export interface ScheduleConfig {
@@ -26,6 +29,13 @@ export interface ScheduleConfig {
 export interface DatabaseCleanupConfig {
   enabled: boolean;
   retentionDays: number; // Actually stores seconds, but keeping the name for compatibility
+  deleteIfNotInGitHub: boolean;
+  orphanedRepoAction: "skip" | "archive" | "delete";
+  dryRun: boolean;
+  deleteFromGitea?: boolean;
+  protectedRepos?: string[];
+  batchSize?: number;
+  pauseBetweenDeletes?: number;
   lastRun?: Date;
   nextRun?: Date;
 }

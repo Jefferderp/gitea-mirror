@@ -15,7 +15,7 @@ import { createMirrorJob } from "@/lib/helpers";
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body: AddRepositoriesApiRequest = await request.json();
-    const { owner, repo, userId } = body;
+    const { owner, repo, userId, force = false } = body;
 
     if (!owner || !repo || !userId) {
       return new Response(
@@ -27,26 +27,43 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
+    const trimmedOwner = owner.trim();
+    const trimmedRepo = repo.trim();
+
+    if (!trimmedOwner || !trimmedRepo) {
+      return jsonResponse({
+        data: {
+          success: false,
+          error: "Missing owner, repo, or userId",
+        },
+        status: 400,
+      });
+    }
+
+    const normalizedOwner = trimmedOwner.toLowerCase();
+    const normalizedRepo = trimmedRepo.toLowerCase();
+    const normalizedFullName = `${normalizedOwner}/${normalizedRepo}`;
+
     // Check if repository with the same owner, name, and userId already exists
-    const existingRepo = await db
+    const [existingRepo] = await db
       .select()
       .from(repositories)
       .where(
         and(
-          eq(repositories.owner, owner),
-          eq(repositories.name, repo),
-          eq(repositories.userId, userId)
+          eq(repositories.userId, userId),
+          eq(repositories.normalizedFullName, normalizedFullName)
         )
-      );
+      )
+      .limit(1);
 
-    if (existingRepo.length > 0) {
+    if (existingRepo && !force) {
       return jsonResponse({
         data: {
           success: false,
           error:
             "Repository with this name and owner already exists for this user",
         },
-        status: 400,
+        status: 409,
       });
     }
 
@@ -68,14 +85,17 @@ export const POST: APIRoute = async ({ request }) => {
 
     const octokit = new Octokit(); // No auth for public repos
 
-    const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
+    const { data: repoData } = await octokit.rest.repos.get({
+      owner: trimmedOwner,
+      repo: trimmedRepo,
+    });
 
-    const metadata = {
-      id: uuidv4(),
+    const baseMetadata = {
       userId,
       configId,
       name: repoData.name,
       fullName: repoData.full_name,
+      normalizedFullName,
       url: repoData.html_url,
       cloneUrl: repoData.clone_url,
       owner: repoData.owner.login,
@@ -94,6 +114,37 @@ export const POST: APIRoute = async ({ request }) => {
       description: repoData.description ?? null,
       defaultBranch: repoData.default_branch,
       visibility: (repoData.visibility ?? "public") as RepositoryVisibility,
+      lastMirrored: existingRepo?.lastMirrored ?? null,
+      errorMessage: existingRepo?.errorMessage ?? null,
+      mirroredLocation: existingRepo?.mirroredLocation ?? "",
+      destinationOrg: existingRepo?.destinationOrg ?? null,
+      updatedAt: repoData.updated_at
+        ? new Date(repoData.updated_at)
+        : new Date(),
+    };
+
+    if (existingRepo && force) {
+      const [updatedRepo] = await db
+        .update(repositories)
+        .set({
+          ...baseMetadata,
+          normalizedFullName,
+          configId,
+        })
+        .where(eq(repositories.id, existingRepo.id))
+        .returning();
+
+      const resPayload: AddRepositoriesApiResponse = {
+        success: true,
+        repository: updatedRepo ?? existingRepo,
+        message: "Repository already exists; metadata refreshed.",
+      };
+
+      return jsonResponse({ data: resPayload, status: 200 });
+    }
+
+    const metadata = {
+      id: uuidv4(),
       status: "imported" as Repository["status"],
       lastMirrored: null,
       errorMessage: null,
@@ -102,15 +153,13 @@ export const POST: APIRoute = async ({ request }) => {
       createdAt: repoData.created_at
         ? new Date(repoData.created_at)
         : new Date(),
-      updatedAt: repoData.updated_at
-        ? new Date(repoData.updated_at)
-        : new Date(),
-    };
+      ...baseMetadata,
+    } satisfies Repository;
 
     await db
       .insert(repositories)
       .values(metadata)
-      .onConflictDoNothing({ target: [repositories.userId, repositories.fullName] });
+      .onConflictDoNothing({ target: [repositories.userId, repositories.normalizedFullName] });
 
     createMirrorJob({
       userId,

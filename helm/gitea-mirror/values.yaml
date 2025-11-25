@@ -46,7 +46,7 @@ route:
 
 service:
   type: ClusterIP
-  port: 8080
+  port: 4321
   clusterIP: None
   annotations: {}
   externalTrafficPolicy:
@@ -55,7 +55,7 @@ service:
   loadBalancerClass:
 
 deployment:
-  port: 8080
+  port: 4321
   strategy:
     type: Recreate
   env: []

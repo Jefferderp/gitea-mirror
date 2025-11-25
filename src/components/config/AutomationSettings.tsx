@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Clock,
   Database,
@@ -16,7 +17,8 @@ import {
   Calendar,
   Activity,
   Zap,
-  Info
+  Info,
+  Archive,
 } from "lucide-react";
 import {
   Tooltip,
@@ -120,13 +122,13 @@ export function AutomationSettings({
         </CardTitle>
       </CardHeader>
       
-      <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Automatic Syncing Section */}
-          <div className="space-y-4 p-4 border border-border rounded-lg bg-card/50">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium flex items-center gap-2">
-                <RefreshCw className="h-4 w-4 text-primary" />
+  <CardContent className="space-y-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Automatic Syncing Section */}
+      <div className="space-y-4 p-4 border border-border rounded-lg bg-card/50">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-primary" />
                 Automatic Syncing
               </h3>
               {isAutoSavingSchedule && (
@@ -139,6 +141,7 @@ export function AutomationSettings({
                 <Checkbox
                   id="enable-auto-mirror"
                   checked={scheduleConfig.enabled}
+                  className="mt-1.25"
                   onCheckedChange={(checked) =>
                     onScheduleChange({ ...scheduleConfig, enabled: !!checked })
                   }
@@ -218,17 +221,17 @@ export function AutomationSettings({
                     Enable automatic syncing to schedule periodic repository updates
                   </div>
                 )}
-              </div>
-            </div>
           </div>
+        </div>
+      </div>
 
-          {/* Database Cleanup Section */}
-          <div className="space-y-4 p-4 border border-border rounded-lg bg-card/50">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium flex items-center gap-2">
-                <Database className="h-4 w-4 text-primary" />
-                Database Maintenance
-              </h3>
+      {/* Database Cleanup Section */}
+      <div className="space-y-4 p-4 border border-border rounded-lg bg-card/50">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Database className="h-4 w-4 text-primary" />
+            Database Maintenance
+          </h3>
               {isAutoSavingCleanup && (
                 <Activity className="h-4 w-4 animate-spin text-muted-foreground" />
               )}
@@ -239,6 +242,7 @@ export function AutomationSettings({
                 <Checkbox
                   id="enable-auto-cleanup"
                   checked={cleanupConfig.enabled}
+                  className="mt-1.25"
                   onCheckedChange={(checked) =>
                     onCleanupChange({ ...cleanupConfig, enabled: !!checked })
                   }
@@ -257,8 +261,8 @@ export function AutomationSettings({
               </div>
 
               {cleanupConfig.enabled && (
-                <div className="ml-6 space-y-3">
-                  <div>
+                <div className="ml-6 space-y-5">
+                  <div className="space-y-2">
                     <Label htmlFor="retention-period" className="text-sm flex items-center gap-2">
                       Data retention period
                       <TooltipProvider>
@@ -275,35 +279,36 @@ export function AutomationSettings({
                         </Tooltip>
                       </TooltipProvider>
                     </Label>
-                    <Select
-                      value={cleanupConfig.retentionDays.toString()}
-                      onValueChange={(value) =>
-                        onCleanupChange({
-                          ...cleanupConfig,
-                          retentionDays: parseInt(value, 10),
-                        })
-                      }
-                    >
-                      <SelectTrigger id="retention-period" className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {retentionPeriods.map((option) => (
-                          <SelectItem
-                            key={option.value}
-                            value={option.value.toString()}
-                          >
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {cleanupConfig.enabled && (
-                      <p className="text-xs text-muted-foreground mt-1">
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <Select
+                        value={cleanupConfig.retentionDays.toString()}
+                        onValueChange={(value) =>
+                          onCleanupChange({
+                            ...cleanupConfig,
+                            retentionDays: parseInt(value, 10),
+                          })
+                        }
+                      >
+                        <SelectTrigger id="retention-period" className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {retentionPeriods.map((option) => (
+                            <SelectItem
+                              key={option.value}
+                              value={option.value.toString()}
+                            >
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
                         Cleanup runs {getCleanupFrequencyText(cleanupConfig.retentionDays)}
                       </p>
-                    )}
+                    </div>
                   </div>
+
                 </div>
               )}
 
@@ -334,13 +339,108 @@ export function AutomationSettings({
                 ) : (
                   <div className="text-xs text-muted-foreground">
                     Enable automatic cleanup to optimize database storage
-                  </div>
-                )}
               </div>
-            </div>
+            )}
           </div>
         </div>
-      </CardContent>
+      </div>
+
+      {/* Repository Cleanup Section */}
+      <div className="space-y-4 p-4 border border-border rounded-lg bg-card/50 md:col-span-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <Archive className="h-4 w-4 text-primary" />
+            Repository Cleanup (orphaned mirrors)
+          </h3>
+          {isAutoSavingCleanup && (
+            <Activity className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex items-start space-x-3">
+            <Checkbox
+              id="cleanup-handle-orphans"
+              checked={Boolean(cleanupConfig.deleteIfNotInGitHub)}
+              className="mt-1.25"
+              onCheckedChange={(checked) =>
+                onCleanupChange({
+                  ...cleanupConfig,
+                  deleteIfNotInGitHub: Boolean(checked),
+                })
+              }
+            />
+            <div className="space-y-0.5 flex-1">
+              <Label
+                htmlFor="cleanup-handle-orphans"
+                className="text-sm font-normal cursor-pointer"
+              >
+                Handle orphaned repositories automatically
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Keep your Gitea backups when GitHub repos disappear. Archive is the safest option—it preserves data and disables automatic syncs.
+              </p>
+            </div>
+          </div>
+
+          {cleanupConfig.deleteIfNotInGitHub && (
+            <div className="space-y-3 ml-6">
+              <div className="space-y-1">
+                <Label htmlFor="cleanup-orphaned-action" className="text-sm font-medium">
+                  Action for orphaned repositories
+                </Label>
+                <Select
+                  value={cleanupConfig.orphanedRepoAction ?? "archive"}
+                  onValueChange={(value) =>
+                    onCleanupChange({
+                      ...cleanupConfig,
+                      orphanedRepoAction: value as DatabaseCleanupConfig["orphanedRepoAction"],
+                    })
+                  }
+                >
+                  <SelectTrigger id="cleanup-orphaned-action">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="archive">Archive (preserve data)</SelectItem>
+                    <SelectItem value="skip">Skip (leave as-is)</SelectItem>
+                    <SelectItem value="delete">Delete from Gitea</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Archive renames mirror backups with an <code>archived-</code> prefix and disables automatic syncs—use Manual Sync when you want to refresh.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label
+                    htmlFor="cleanup-dry-run"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    Dry run (log only)
+                  </Label>
+                  <p className="text-xs text-muted-foreground max-w-xl">
+                    When enabled, cleanup logs the planned action without modifying repositories.
+                  </p>
+                </div>
+                <Switch
+                  id="cleanup-dry-run"
+                  checked={Boolean(cleanupConfig.dryRun)}
+                  onCheckedChange={(checked) =>
+                    onCleanupChange({
+                      ...cleanupConfig,
+                      dryRun: Boolean(checked),
+                    })
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  </CardContent>
     </Card>
   );
 }

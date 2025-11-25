@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Search, RefreshCw, FlipHorizontal, Filter } from "lucide-react";
+import { Search, RefreshCw, FlipHorizontal, Filter, LoaderCircle, Trash2 } from "lucide-react";
 import type { MirrorJob, Organization } from "@/lib/db/schema";
 import { OrganizationList } from "./OrganizationsList";
 import AddOrganizationDialog from "./AddOrganizationDialog";
@@ -37,6 +37,14 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export function Organization() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -53,6 +61,15 @@ export function Organization() {
     organizationType: "",
   });
   const [loadingOrgIds, setLoadingOrgIds] = useState<Set<string>>(new Set()); // this is used when the api actions are performed
+  const [duplicateOrgCandidate, setDuplicateOrgCandidate] = useState<{
+    org: string;
+    role: MembershipRole;
+  } | null>(null);
+  const [isDuplicateOrgDialogOpen, setIsDuplicateOrgDialogOpen] = useState(false);
+  const [isProcessingDuplicateOrg, setIsProcessingDuplicateOrg] = useState(false);
+  const [orgToDelete, setOrgToDelete] = useState<Organization | null>(null);
+  const [isDeleteOrgDialogOpen, setIsDeleteOrgDialogOpen] = useState(false);
+  const [isDeletingOrg, setIsDeletingOrg] = useState(false);
 
   // Create a stable callback using useCallback
   const handleNewMessage = useCallback((data: MirrorJob) => {
@@ -257,19 +274,45 @@ export function Organization() {
   const handleAddOrganization = async ({
     org,
     role,
+    force = false,
   }: {
     org: string;
     role: MembershipRole;
+    force?: boolean;
   }) => {
-    try {
-      if (!user || !user.id) {
-        return;
+    if (!user || !user.id) {
+      return;
+    }
+
+    const trimmedOrg = org.trim();
+    const normalizedOrg = trimmedOrg.toLowerCase();
+
+    if (!trimmedOrg) {
+      toast.error("Please enter a valid organization name.");
+      throw new Error("Invalid organization name");
+    }
+
+    if (!force) {
+      const alreadyExists = organizations.some(
+        (existing) => existing.name?.trim().toLowerCase() === normalizedOrg
+      );
+
+      if (alreadyExists) {
+        toast.warning("Organization already exists.");
+        setDuplicateOrgCandidate({ org: trimmedOrg, role });
+        setIsDuplicateOrgDialogOpen(true);
+        throw new Error("Organization already exists");
       }
+    }
+
+    try {
+      setIsLoading(true);
 
       const reqPayload: AddOrganizationApiRequest = {
         userId: user.id,
-        org,
+        org: trimmedOrg,
         role,
+        force,
       };
 
       const response = await apiRequest<AddOrganizationApiResponse>(
@@ -281,22 +324,97 @@ export function Organization() {
       );
 
       if (response.success) {
-        toast.success(`Organization added successfully`);
-        setOrganizations((prev) => [...prev, response.organization]);
+        const message = force
+          ? "Organization already exists; using existing entry."
+          : "Organization added successfully";
+        toast.success(message);
 
-        await fetchOrganizations();
+        await fetchOrganizations(false);
 
         setFilter((prev) => ({
           ...prev,
-          searchTerm: org,
+          searchTerm: trimmedOrg,
         }));
+
+        if (force) {
+          setIsDuplicateOrgDialogOpen(false);
+          setDuplicateOrgCandidate(null);
+        }
       } else {
         showErrorToast(response.error || "Error adding organization", toast);
       }
     } catch (error) {
       showErrorToast(error, toast);
+      throw error;
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleConfirmDuplicateOrganization = async () => {
+    if (!duplicateOrgCandidate) {
+      return;
+    }
+
+    setIsProcessingDuplicateOrg(true);
+    try {
+      await handleAddOrganization({
+        org: duplicateOrgCandidate.org,
+        role: duplicateOrgCandidate.role,
+        force: true,
+      });
+      setIsDialogOpen(false);
+      setDuplicateOrgCandidate(null);
+      setIsDuplicateOrgDialogOpen(false);
+    } catch (error) {
+      // Error already surfaced via toast
+    } finally {
+      setIsProcessingDuplicateOrg(false);
+    }
+  };
+
+  const handleCancelDuplicateOrganization = () => {
+    setIsDuplicateOrgDialogOpen(false);
+    setDuplicateOrgCandidate(null);
+  };
+
+  const handleRequestDeleteOrganization = (orgId: string) => {
+    const org = organizations.find((item) => item.id === orgId);
+    if (!org) {
+      toast.error("Organization not found");
+      return;
+    }
+
+    setOrgToDelete(org);
+    setIsDeleteOrgDialogOpen(true);
+  };
+
+  const handleDeleteOrganization = async () => {
+    if (!user || !user.id || !orgToDelete) {
+      return;
+    }
+
+    setIsDeletingOrg(true);
+    try {
+      const response = await apiRequest<{ success: boolean; error?: string }>(
+        `/organizations/${orgToDelete.id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.success) {
+        toast.success(`Removed ${orgToDelete.name} from Gitea Mirror.`);
+        await fetchOrganizations(false);
+      } else {
+        showErrorToast(response.error || "Failed to delete organization", toast);
+      }
+    } catch (error) {
+      showErrorToast(error, toast);
+    } finally {
+      setIsDeletingOrg(false);
+      setIsDeleteOrgDialogOpen(false);
+      setOrgToDelete(null);
     }
   };
 
@@ -791,6 +909,7 @@ export function Organization() {
         onMirror={handleMirrorOrg}
         onIgnore={handleIgnoreOrg}
         onAddOrganization={() => setIsDialogOpen(true)}
+        onDelete={handleRequestDeleteOrganization}
         onRefresh={async () => {
           await fetchOrganizations(false);
         }}
@@ -801,6 +920,68 @@ export function Organization() {
         isDialogOpen={isDialogOpen}
         setIsDialogOpen={setIsDialogOpen}
       />
+
+      <Dialog open={isDuplicateOrgDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          handleCancelDuplicateOrganization();
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Organization already exists</DialogTitle>
+            <DialogDescription>
+              {duplicateOrgCandidate?.org ?? "This organization"} is already synced in Gitea Mirror.
+              Continuing will reuse the existing entry without creating a duplicate. You can remove it later if needed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancelDuplicateOrganization} disabled={isProcessingDuplicateOrg}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmDuplicateOrganization} disabled={isProcessingDuplicateOrg}>
+              {isProcessingDuplicateOrg ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                "Continue"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isDeleteOrgDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setIsDeleteOrgDialogOpen(false);
+          setOrgToDelete(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove organization from Gitea Mirror?</DialogTitle>
+            <DialogDescription>
+              {orgToDelete?.name ?? "This organization"} will be deleted from Gitea Mirror only. Nothing will be removed from Gitea; you will need to clean it up manually in Gitea if desired.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setIsDeleteOrgDialogOpen(false);
+              setOrgToDelete(null);
+            }} disabled={isDeletingOrg}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteOrganization} disabled={isDeletingOrg}>
+              {isDeletingOrg ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </span>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

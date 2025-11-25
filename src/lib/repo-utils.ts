@@ -33,6 +33,7 @@ export function normalizeGitRepoToInsert(
     configId,
     name: repo.name,
     fullName: repo.fullName,
+    normalizedFullName: repo.fullName.toLowerCase(),
     url: repo.url,
     cloneUrl: repo.cloneUrl,
     owner: repo.owner,
@@ -68,4 +69,3 @@ export function calcBatchSizeForInsert(columnCount: number, maxParams = 999): nu
   const effectiveMax = Math.max(1, maxParams - safety);
   return Math.max(1, Math.floor(effectiveMax / columnCount));
 }
-

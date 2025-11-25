@@ -101,26 +101,30 @@ jobs:
       # Build and push Docker image
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false # Disable provenance to avoid unknown/unknown
+          sbom: false       # Disable sbom to avoid unknown/unknown
 
       # Load image locally for security scanning (PRs only)
       - name: Load image for scanning
         if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           load: true
           tags: gitea-mirror:scan
           cache-from: type=gha
+          provenance: false # Disable provenance to avoid unknown/unknown
+          sbom: false       # Disable sbom to avoid unknown/unknown
 
       # Wait for image to be available in registry
       - name: Wait for image availability
@@ -149,7 +153,11 @@ jobs:
             ### Pull and Test
             \`\`\`bash
             docker pull ${imagePath}
-            docker run -d -p 3000:3000 --name gitea-mirror-test ${imagePath}
+            docker run -d \
+              -p 4321:4321 \
+              -e BETTER_AUTH_SECRET=your-secret-here \
+              -e BETTER_AUTH_URL=http://localhost:4321 \
+              --name gitea-mirror-test ${imagePath}
             \`\`\`
 
             ### Docker Compose Testing
@@ -158,13 +166,15 @@ jobs:
               gitea-mirror:
                 image: ${imagePath}
                 ports:
-                  - "3000:3000"
+                  - "4321:4321"
                 environment:
                   - BETTER_AUTH_SECRET=your-secret-here
+                  - BETTER_AUTH_URL=http://localhost:4321
+                  - BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:4321
             \`\`\`
 
-            > 💡 **Note:** PR images are tagged as \`pr-<number>\` and only built for \`linux/amd64\` to speed up CI.
-            > Production images (\`latest\`, version tags) are multi-platform (\`linux/amd64\`, \`linux/arm64\`).
+            > 💡 **Note:** PR images are tagged as \`pr-<number>\` and built for both \`linux/amd64\` and \`linux/arm64\`.
+            > Production images (\`latest\`, version tags) use the same multi-platform set.
 
             ---
             📦 View in [GitHub Packages](https://github.com/${{ github.repository }}/pkgs/container/gitea-mirror)`;
@@ -224,4 +234,3 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: scout-results.sarif
-

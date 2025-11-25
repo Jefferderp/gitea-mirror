@@ -29,7 +29,7 @@ kubectl create namespace gitea-mirror
 helm upgrade --install gitea-mirror ./helm/gitea-mirror   --namespace gitea-mirror   --set "gitea-mirror.github.username=<your-gh-username>"   --set "gitea-mirror.github.token=<your-gh-token>"   --set "gitea-mirror.gitea.url=https://gitea.example.com"   --set "gitea-mirror.gitea.token=<your-gitea-token>"
 ```
 
-The default Service is `ClusterIP` on port `8080`. You can expose it via Ingress or Gateway API; see below.
+The default Service is `ClusterIP` on port `4321`. You can expose it via Ingress or Gateway API; see below.
 
 ---
 
@@ -78,7 +78,7 @@ If you enabled persistence with a PVC the data may persist; delete the PVC manua
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `deployment.port` | int | `8080` | Container port & named `http` port. |
+| `deployment.port` | int | `4321` | Container port & named `http` port. |
 | `deployment.strategy.type` | string | `Recreate` | Update strategy (`Recreate` or `RollingUpdate`). |
 | `deployment.strategy.rollingUpdate.maxUnavailable/maxSurge` | string/int | — | Used when `type=RollingUpdate`. |
 | `deployment.env` | list | `[]` | Extra environment variables. |
@@ -95,7 +95,7 @@ If you enabled persistence with a PVC the data may persist; delete the PVC manua
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `service.type` | string | `ClusterIP` | Service type. |
-| `service.port` | int | `8080` | Service port. |
+| `service.port` | int | `4321` | Service port. |
 | `service.clusterIP` | string | `None` | ClusterIP (only when `type=ClusterIP`). |
 | `service.externalTrafficPolicy` | string | `""` | External traffic policy (LB). |
 | `service.loadBalancerIP` | string | `""` | LoadBalancer IP. |
@@ -228,7 +228,7 @@ ingress:
         - mirror.example.com
 ```
 
-This creates an Ingress routing `/` to the service on port `8080`.
+This creates an Ingress routing `/` to the service on port `4321`.
 
 ### Using Gateway API (HTTPRoute)
 
@@ -257,7 +257,7 @@ By default, the chart provisions a PVC named `gitea-mirror-storage` with `1Gi` a
 
 ## Environment & health endpoints
 
-The container listens on `PORT` (defaults to `deployment.port` = `8080`) and exposes `GET /api/health` for liveness/readiness/startup probes.
+The container listens on `PORT` (defaults to `deployment.port` = `4321`) and exposes `GET /api/health` for liveness/readiness/startup probes.
 
 ---
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,9 +17,11 @@ interface AddRepositoryDialogProps {
   onAddRepository: ({
     repo,
     owner,
+    force,
   }: {
     repo: string;
     owner: string;
+    force?: boolean;
   }) => Promise<void>;
 }
 
@@ -32,6 +34,14 @@ export default function AddRepositoryDialog({
   const [owner, setOwner] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!isDialogOpen) {
+      setError("");
+      setRepo("");
+      setOwner("");
+    }
+  }, [isDialogOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

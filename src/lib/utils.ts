@@ -29,6 +29,15 @@ export function formatDate(date?: Date | string | null): string {
   }).format(new Date(date));
 }
 
+export function formatDateShort(date?: Date | string | null): string | undefined {
+  if (!date) return undefined;
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(date));
+}
+
 export function formatLastSyncTime(date: Date | string | null): string {
   if (!date) return "Never";
   

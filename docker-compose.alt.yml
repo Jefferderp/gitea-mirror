@@ -16,6 +16,8 @@ services:
       # === ABSOLUTELY REQUIRED ===
       # This MUST be set and CANNOT be changed via UI
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}  # Min 32 chars, required for sessions
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:4321}
+      - BETTER_AUTH_TRUSTED_ORIGINS=${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:4321}
       
       # === CORE SETTINGS ===
       # These are technically required but have working defaults
@@ -23,7 +25,11 @@ services:
       - DATABASE_URL=file:data/gitea-mirror.db
       - HOST=0.0.0.0
       - PORT=4321
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:4321}
+      - PUBLIC_BETTER_AUTH_URL=${PUBLIC_BETTER_AUTH_URL:-http://localhost:4321}
+      # Optional concurrency controls (defaults match in-app defaults)
+      # If you want perfect ordering of issues and PRs, set these at 1
+      - MIRROR_ISSUE_CONCURRENCY=${MIRROR_ISSUE_CONCURRENCY:-3}
+      - MIRROR_PULL_REQUEST_CONCURRENCY=${MIRROR_PULL_REQUEST_CONCURRENCY:-5}
       
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=3", "--spider", "http://localhost:4321/api/health"]

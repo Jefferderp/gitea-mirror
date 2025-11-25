@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM oven/bun:1.2.23-alpine AS base
+FROM oven/bun:1.3.1-alpine AS base
 WORKDIR /app
 RUN apk add --no-cache libc6-compat python3 make g++ gcc wget sqlite openssl ca-certificates
 
@@ -15,9 +15,9 @@ FROM deps AS builder
 COPY . .
 RUN bun run build
 RUN mkdir -p dist/scripts && \
-    for script in scripts/*.ts; do \
-      bun build "$script" --target=bun --outfile=dist/scripts/$(basename "${script%.ts}.js"); \
-    done
+  for script in scripts/*.ts; do \
+  bun build "$script" --target=bun --outfile=dist/scripts/$(basename "${script%.ts}.js"); \
+  done
 
 # ----------------------------
 FROM deps AS pruner
@@ -40,12 +40,12 @@ ENV DATABASE_URL=file:data/gitea-mirror.db
 
 # Create directories and setup permissions
 RUN mkdir -p /app/certs && \
-    chmod +x ./docker-entrypoint.sh && \
-    mkdir -p /app/data && \
-    addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 gitea-mirror && \
-    chown -R gitea-mirror:nodejs /app/data && \
-    chown -R gitea-mirror:nodejs /app/certs
+  chmod +x ./docker-entrypoint.sh && \
+  mkdir -p /app/data && \
+  addgroup --system --gid 1001 nodejs && \
+  adduser --system --uid 1001 gitea-mirror && \
+  chown -R gitea-mirror:nodejs /app/data && \
+  chown -R gitea-mirror:nodejs /app/certs
 
 USER gitea-mirror
 

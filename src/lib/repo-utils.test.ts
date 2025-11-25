@@ -62,6 +62,7 @@ describe('normalizeGitRepoToInsert', () => {
     expect(insert.description).toBeNull();
     expect(insert.lastMirrored).toBeNull();
     expect(insert.errorMessage).toBeNull();
+    expect(insert.normalizedFullName).toBe(repo.fullName.toLowerCase());
   });
 });
 
@@ -72,4 +73,3 @@ describe('calcBatchSizeForInsert', () => {
     expect(batch * 29).toBeLessThanOrEqual(999);
   });
 });
-

@@ -56,6 +56,11 @@ export function ConfigTabs() {
     cleanupConfig: {
       enabled: false, // Don't set defaults here - will be loaded from API  
       retentionDays: 0, // Will be replaced with actual value from API
+      deleteIfNotInGitHub: true,
+      orphanedRepoAction: "archive",
+      dryRun: false,
+      deleteFromGitea: false,
+      protectedRepos: [],
     },
     mirrorOptions: {
       mirrorReleases: false,

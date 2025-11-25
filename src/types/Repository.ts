@@ -81,11 +81,12 @@ export interface AddRepositoriesApiRequest {
   userId: string;
   repo: string;
   owner: string;
+  force?: boolean;
 }
 
 export interface AddRepositoriesApiResponse {
   success: boolean;
   message: string;
-  repository: Repository;
+  repository?: Repository;
   error?: string;
 }

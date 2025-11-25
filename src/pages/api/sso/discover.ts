@@ -17,11 +17,11 @@ export async function POST(context: APIContext) {
       });
     }
 
-    // Validate issuer URL format
-    let cleanIssuer: string;
+    // Validate issuer URL format while keeping trailing slash if provided
+    const trimmedIssuer = issuer.trim();
+    let parsedIssuer: URL;
     try {
-      const issuerUrl = new URL(issuer.trim());
-      cleanIssuer = issuerUrl.toString().replace(/\/$/, ""); // Remove trailing slash
+      parsedIssuer = new URL(trimmedIssuer);
     } catch (e) {
       return new Response(
         JSON.stringify({ 
@@ -35,7 +35,8 @@ export async function POST(context: APIContext) {
       );
     }
 
-    const discoveryUrl = `${cleanIssuer}/.well-known/openid-configuration`;
+    const issuerForDiscovery = trimmedIssuer.replace(/\/$/, "");
+    const discoveryUrl = `${issuerForDiscovery}/.well-known/openid-configuration`;
 
     try {
       // Fetch OIDC discovery document with timeout
@@ -52,9 +53,9 @@ export async function POST(context: APIContext) {
         });
       } catch (fetchError) {
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error(`Request timeout: The OIDC provider at ${cleanIssuer} did not respond within 10 seconds`);
+          throw new Error(`Request timeout: The OIDC provider at ${trimmedIssuer} did not respond within 10 seconds`);
         }
-        throw new Error(`Network error: Could not connect to ${cleanIssuer}. Please verify the URL is correct and accessible.`);
+        throw new Error(`Network error: Could not connect to ${trimmedIssuer}. Please verify the URL is correct and accessible.`);
       } finally {
         clearTimeout(timeoutId);
       }
@@ -63,7 +64,7 @@ export async function POST(context: APIContext) {
         if (response.status === 404) {
           throw new Error(`OIDC discovery document not found at ${discoveryUrl}. For Authentik, ensure you're using the correct application slug in the URL.`);
         } else if (response.status >= 500) {
-          throw new Error(`OIDC provider error (${response.status}): The server at ${cleanIssuer} returned an error.`);
+          throw new Error(`OIDC provider error (${response.status}): The server at ${trimmedIssuer} returned an error.`);
         } else {
           throw new Error(`Failed to fetch discovery document (${response.status}): ${response.statusText}`);
         }
@@ -73,12 +74,12 @@ export async function POST(context: APIContext) {
       try {
         config = await response.json();
       } catch (parseError) {
-        throw new Error(`Invalid response: The discovery document from ${cleanIssuer} is not valid JSON.`);
+        throw new Error(`Invalid response: The discovery document from ${trimmedIssuer} is not valid JSON.`);
       }
 
       // Extract the essential endpoints
       const discoveredConfig = {
-        issuer: config.issuer || cleanIssuer,
+        issuer: config.issuer || trimmedIssuer,
         authorizationEndpoint: config.authorization_endpoint,
         tokenEndpoint: config.token_endpoint,
         userInfoEndpoint: config.userinfo_endpoint,
@@ -88,7 +89,7 @@ export async function POST(context: APIContext) {
         responseTypes: config.response_types_supported || ["code"],
         grantTypes: config.grant_types_supported || ["authorization_code"],
         // Suggested domain from issuer
-        suggestedDomain: new URL(cleanIssuer).hostname.replace("www.", ""),
+        suggestedDomain: parsedIssuer.hostname.replace("www.", ""),
       };
 
       return new Response(JSON.stringify(discoveredConfig), {

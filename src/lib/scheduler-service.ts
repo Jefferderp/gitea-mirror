@@ -99,12 +99,12 @@ async function runScheduledSync(config: any): Promise<void> {
         
         // Check for new repositories
         const existingRepos = await db
-          .select({ fullName: repositories.fullName })
+          .select({ normalizedFullName: repositories.normalizedFullName })
           .from(repositories)
           .where(eq(repositories.userId, userId));
         
-        const existingRepoNames = new Set(existingRepos.map(r => r.fullName));
-        const newRepos = allGithubRepos.filter(r => !existingRepoNames.has(r.fullName));
+        const existingRepoNames = new Set(existingRepos.map(r => r.normalizedFullName));
+        const newRepos = allGithubRepos.filter(r => !existingRepoNames.has(r.fullName.toLowerCase()));
         
         if (newRepos.length > 0) {
           console.log(`[Scheduler] Found ${newRepos.length} new repositories for user ${userId}`);
@@ -123,7 +123,7 @@ async function runScheduledSync(config: any): Promise<void> {
             await db
               .insert(repositories)
               .values(batch)
-              .onConflictDoNothing({ target: [repositories.userId, repositories.fullName] });
+              .onConflictDoNothing({ target: [repositories.userId, repositories.normalizedFullName] });
           }
           console.log(`[Scheduler] Successfully imported ${newRepos.length} new repositories for user ${userId}`);
         } else {
@@ -432,12 +432,12 @@ async function performInitialAutoStart(): Promise<void> {
         
         // Check for new repositories
         const existingRepos = await db
-          .select({ fullName: repositories.fullName })
+          .select({ normalizedFullName: repositories.normalizedFullName })
           .from(repositories)
           .where(eq(repositories.userId, config.userId));
         
-        const existingRepoNames = new Set(existingRepos.map(r => r.fullName));
-        const reposToImport = allGithubRepos.filter(r => !existingRepoNames.has(r.fullName));
+        const existingRepoNames = new Set(existingRepos.map(r => r.normalizedFullName));
+        const reposToImport = allGithubRepos.filter(r => !existingRepoNames.has(r.fullName.toLowerCase()));
         
         if (reposToImport.length > 0) {
           console.log(`[Scheduler] Importing ${reposToImport.length} repositories for user ${config.userId}...`);
@@ -456,7 +456,7 @@ async function performInitialAutoStart(): Promise<void> {
             await db
               .insert(repositories)
               .values(batch)
-              .onConflictDoNothing({ target: [repositories.userId, repositories.fullName] });
+              .onConflictDoNothing({ target: [repositories.userId, repositories.normalizedFullName] });
           }
           console.log(`[Scheduler] Successfully imported ${reposToImport.length} repositories`);
         } else {

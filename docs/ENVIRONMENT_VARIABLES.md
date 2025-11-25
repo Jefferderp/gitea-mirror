@@ -141,6 +141,10 @@ Control what content gets mirrored from GitHub to Gitea.
 | `MIRROR_PULL_REQUESTS` | Mirror pull requests (requires MIRROR_METADATA=true) | `false` | `true`, `false` |
 | `MIRROR_LABELS` | Mirror labels (requires MIRROR_METADATA=true) | `false` | `true`, `false` |
 | `MIRROR_MILESTONES` | Mirror milestones (requires MIRROR_METADATA=true) | `false` | `true`, `false` |
+| `MIRROR_ISSUE_CONCURRENCY` | Number of issues processed in parallel. Set above `1` to speed up mirroring at the risk of out-of-order creation. | `3` | Integer ≥ 1 |
+| `MIRROR_PULL_REQUEST_CONCURRENCY` | Number of pull requests processed in parallel. Values above `1` may cause ordering differences. | `5` | Integer ≥ 1 |
+
+> **Ordering vs Throughput:** Metadata now mirrors sequentially by default to preserve chronology. Increase the concurrency variables only if you can tolerate minor out-of-order entries.
 
 ## Automation Configuration
 
@@ -229,7 +233,7 @@ Configure automatic cleanup of old events and data.
 | `CLEANUP_DELETE_FROM_GITEA` | Delete repositories from Gitea | `false` | `true`, `false` |
 | `CLEANUP_DELETE_IF_NOT_IN_GITHUB` | Delete repos not found in GitHub (automatically enables cleanup) | `true` | `true`, `false` |
 | `CLEANUP_ORPHANED_REPO_ACTION` | Action for orphaned repositories. **Note**: `archive` is recommended to preserve backups | `archive` | `skip`, `archive`, `delete` |
-| `CLEANUP_DRY_RUN` | Test mode without actual deletion | `true` | `true`, `false` |
+| `CLEANUP_DRY_RUN` | Test mode without actual deletion | `false` | `true`, `false` |
 | `CLEANUP_PROTECTED_REPOS` | Comma-separated list of protected repository names | - | Comma-separated strings |
 
 **🛡️ Safety Features (Backup Protection)**:
@@ -242,10 +246,11 @@ Configure automatic cleanup of old events and data.
 - **Regular repositories**: Uses Gitea's native archive feature (PATCH `/repos/{owner}/{repo}` with `archived: true`)
   - Makes repository read-only while preserving all data
 - **Mirror repositories**: Uses rename strategy (Gitea API returns 422 for archiving mirrors)
-  - Renamed with `[ARCHIVED]` prefix for clear identification
+  - Renamed with `archived-` prefix for clear identification
   - Description updated with preservation notice and timestamp
   - Mirror interval set to 8760h (1 year) to minimize sync attempts
   - Repository remains fully accessible and cloneable
+- **Manual Sync Option**: Archived mirrors are still available on the Repositories page with automatic syncs disabled—use the `Manual Sync` action to refresh them on demand.
 
 ### Execution Settings
 

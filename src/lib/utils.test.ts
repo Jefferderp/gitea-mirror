@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { jsonResponse, formatDate, truncate, safeParse, parseErrorMessage, showErrorToast } from "./utils";
+import { jsonResponse, formatDate, formatDateShort, truncate, safeParse, parseErrorMessage, showErrorToast } from "./utils";
 
 describe("jsonResponse", () => {
   test("creates a Response with JSON content", () => {
@@ -62,6 +62,18 @@ describe("formatDate", () => {
   test("returns 'Never' for null or undefined", () => {
     expect(formatDate(null)).toBe("Never");
     expect(formatDate(undefined)).toBe("Never");
+  });
+});
+
+describe("formatDateShort", () => {
+  test("returns formatted date when input is provided", () => {
+    const formatted = formatDateShort("2014-10-20T15:32:10Z");
+    expect(formatted).toBe("Oct 20, 2014");
+  });
+
+  test("returns undefined when date is missing", () => {
+    expect(formatDateShort(null)).toBeUndefined();
+    expect(formatDateShort(undefined)).toBeUndefined();
   });
 });
 

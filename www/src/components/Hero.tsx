@@ -1,5 +1,5 @@
 import { Button } from "./ui/button";
-import { ArrowRight, Shield, RefreshCw } from "lucide-react";
+import { ArrowRight, Shield, RefreshCw, HardDrive } from "lucide-react";
 import { GitHubLogoIcon } from "@radix-ui/react-icons";
 import React, { Suspense } from 'react';
 
@@ -39,31 +39,30 @@ export function Hero() {
       <div className="clip-avoid w-full h-[16rem] md:h-[20rem] lg:h-[12rem] 2xl:h-[16rem]" aria-hidden="true"></div>
       <div className="max-w-7xl mx-auto pb-20 lg:pb-60 xl:pb-24 text-center w-full">
         <h1 className="pt-10 2xl:pt-20 text-3xl xs:text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-tight">
-          <span className="text-foreground">Keep Your Code</span>
+          <span className="text-foreground">Backup Your GitHub</span>
           <br />
           <span className="text-gradient from-primary via-accent to-accent-purple">
-            Safe & Synced
+            To Self-Hosted Gitea
           </span>
         </h1>
 
         <p className="mt-4 sm:mt-6 text-base sm:text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto px-4 z-20">
-          Automatically mirror your GitHub repositories to self-hosted Gitea.
-          Never lose access to your code with continuous backup and
-          synchronization.
+          Automatic, private, and free. Own your code history forever.
+          Preserve issues, PRs, releases, and wiki in your own Gitea server.
         </p>
 
         <div className="mt-6 sm:mt-8 flex flex-wrap items-center justify-center gap-3 text-xs sm:text-sm text-muted-foreground px-4 z-20">
           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary">
-            <Shield className="w-3 h-3 sm:w-4 sm:h-4" />
-            <span className="font-medium">Self-Hosted</span>
+            <HardDrive className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="font-medium">Self-Hosted Backup</span>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent">
             <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4" />
-            <span className="font-medium">Auto-Sync</span>
+            <span className="font-medium">Automated Syncing</span>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent-purple/10 text-accent-purple">
-            <GitHubLogoIcon className="w-3 h-3 sm:w-4 sm:h-4" />
-            <span className="font-medium">Open Source</span>
+            <Shield className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="font-medium">$0/month</span>
           </div>
         </div>
 
@@ -93,32 +92,6 @@ export function Hero() {
             />
           </a>
         </div>
-
-        {/* Call to action buttons */}
-        {/* <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 px-4 z-20">
-          <Button
-            size="lg"
-            className="relative group w-full sm:w-auto min-h-[48px] text-base bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300"
-            asChild
-          >
-            <a
-              href="https://github.com/RayLabsHQ/gitea-mirror"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Get Started
-              <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </a>
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            className="relative w-full sm:w-auto min-h-[48px] text-base border-primary/20 hover:bg-primary/10 hover:border-primary/30 hover:text-foreground transition-all duration-300"
-            asChild
-          >
-            <a href="#features">View Features</a>
-          </Button>
-        </div> */}
       </div>
     </section>
   );

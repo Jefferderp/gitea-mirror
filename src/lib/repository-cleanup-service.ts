@@ -69,7 +69,20 @@ async function identifyOrphanedRepositories(config: any): Promise<any[]> {
     
     // Only identify repositories as orphaned if we successfully accessed GitHub
     // This prevents false positives when GitHub is down or account is inaccessible
-    const orphanedRepos = dbRepos.filter(repo => !githubRepoFullNames.has(repo.fullName));
+    const orphanedRepos = dbRepos.filter(repo => {
+      const isOrphaned = !githubRepoFullNames.has(repo.fullName);
+      if (!isOrphaned) {
+        return false;
+      }
+
+      // Skip repositories we've already archived/preserved
+      if (repo.status === 'archived' || repo.isArchived) {
+        console.log(`[Repository Cleanup] Skipping ${repo.fullName} - already archived`);
+        return false;
+      }
+
+      return true;
+    });
     
     if (orphanedRepos.length > 0) {
       console.log(`[Repository Cleanup] Found ${orphanedRepos.length} orphaned repositories for user ${userId}`);
@@ -98,7 +111,12 @@ async function handleOrphanedRepository(
     console.log(`[Repository Cleanup] Skipping orphaned repository ${repoFullName}`);
     return;
   }
-  
+
+  if (repo.status === 'archived' || repo.isArchived) {
+    console.log(`[Repository Cleanup] Repository ${repoFullName} already archived; skipping additional actions`);
+    return;
+  }
+
   if (dryRun) {
     console.log(`[Repository Cleanup] DRY RUN: Would ${action} orphaned repository ${repoFullName}`);
     return;
@@ -260,7 +278,7 @@ async function runRepositoryCleanup(config: any): Promise<{
     
     // Process orphaned repositories
     const action = cleanupConfig.orphanedRepoAction || 'archive';
-    const dryRun = cleanupConfig.dryRun ?? true;
+    const dryRun = cleanupConfig.dryRun ?? false;
     const batchSize = cleanupConfig.batchSize || 10;
     const pauseBetweenDeletes = cleanupConfig.pauseBetweenDeletes || 2000;
     

@@ -166,6 +166,8 @@ export const auth = betterAuth({
       defaultOverrideUserInfo: true,
       // Allow implicit sign up for new users
       disableImplicitSignUp: false,
+      // Trust email_verified claims from the upstream provider so we can link by matching email
+      trustEmailVerified: true,
     }),
   ],
 });

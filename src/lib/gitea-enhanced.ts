@@ -8,12 +8,26 @@
 
 import type { Config } from "./db/schema";
 import type { Repository } from "./db/schema";
+import { Octokit } from "@octokit/rest";
 import { createMirrorJob } from "./helpers";
 import { decryptConfigTokens } from "./utils/config-encryption";
 import { httpPost, httpGet, httpPatch, HttpError } from "./http-client";
 import { db, repositories, organizations } from "./db";
 import { eq } from "drizzle-orm";
 import { repoStatusEnum } from "@/types/Repository";
+import {
+  parseRepositoryMetadataState,
+  serializeRepositoryMetadataState,
+} from "./metadata-state";
+
+type SyncDependencies = {
+  getGiteaRepoOwnerAsync: typeof import("./gitea")["getGiteaRepoOwnerAsync"];
+  mirrorGitHubReleasesToGitea: typeof import("./gitea")["mirrorGitHubReleasesToGitea"];
+  mirrorGitRepoIssuesToGitea: typeof import("./gitea")["mirrorGitRepoIssuesToGitea"];
+  mirrorGitRepoPullRequestsToGitea: typeof import("./gitea")["mirrorGitRepoPullRequestsToGitea"];
+  mirrorGitRepoLabelsToGitea: typeof import("./gitea")["mirrorGitRepoLabelsToGitea"];
+  mirrorGitRepoMilestonesToGitea: typeof import("./gitea")["mirrorGitRepoMilestonesToGitea"];
+};
 
 /**
  * Enhanced repository information including mirror status
@@ -254,7 +268,7 @@ export async function syncGiteaRepoEnhanced({
 }: {
   config: Partial<Config>;
   repository: Repository;
-}): Promise<any> {
+}, deps?: SyncDependencies): Promise<any> {
   try {
     if (!config.userId || !config.giteaConfig?.url || !config.giteaConfig?.token) {
       throw new Error("Gitea config is required.");
@@ -274,8 +288,8 @@ export async function syncGiteaRepoEnhanced({
       .where(eq(repositories.id, repository.id!));
 
     // Get the expected owner
-    const { getGiteaRepoOwnerAsync } = await import("./gitea");
-    const repoOwner = await getGiteaRepoOwnerAsync({ config, repository });
+    const dependencies = deps ?? (await import("./gitea"));
+    const repoOwner = await dependencies.getGiteaRepoOwnerAsync({ config, repository });
 
     // Check if repo exists and get its info
     const repoInfo = await getGiteaRepoInfo({
@@ -339,6 +353,236 @@ export async function syncGiteaRepoEnhanced({
         Authorization: `token ${decryptedConfig.giteaConfig.token}`,
       });
 
+      const metadataState = parseRepositoryMetadataState(repository.metadata);
+      let metadataUpdated = false;
+      const skipMetadataForStarred =
+        repository.isStarred && config.githubConfig?.starredCodeOnly;
+      let metadataOctokit: Octokit | null = null;
+
+      const ensureOctokit = (): Octokit | null => {
+        if (metadataOctokit) {
+          return metadataOctokit;
+        }
+        if (!decryptedConfig.githubConfig?.token) {
+          return null;
+        }
+        metadataOctokit = new Octokit({
+          auth: decryptedConfig.githubConfig.token,
+        });
+        return metadataOctokit;
+      };
+
+      const shouldMirrorReleases =
+        !!config.giteaConfig?.mirrorReleases && !skipMetadataForStarred;
+      const shouldMirrorIssuesThisRun =
+        !!config.giteaConfig?.mirrorIssues &&
+        !skipMetadataForStarred &&
+        !metadataState.components.issues;
+      const shouldMirrorPullRequests =
+        !!config.giteaConfig?.mirrorPullRequests &&
+        !skipMetadataForStarred &&
+        !metadataState.components.pullRequests;
+      const shouldMirrorLabels =
+        !!config.giteaConfig?.mirrorLabels &&
+        !skipMetadataForStarred &&
+        !shouldMirrorIssuesThisRun &&
+        !metadataState.components.labels;
+      const shouldMirrorMilestones =
+        !!config.giteaConfig?.mirrorMilestones &&
+        !skipMetadataForStarred &&
+        !metadataState.components.milestones;
+
+      if (shouldMirrorReleases) {
+        const octokit = ensureOctokit();
+        if (!octokit) {
+          console.warn(
+            `[Sync] Skipping release mirroring for ${repository.name}: Missing GitHub token`
+          );
+        } else {
+          try {
+            await dependencies.mirrorGitHubReleasesToGitea({
+              config,
+              octokit,
+              repository,
+              giteaOwner: repoOwner,
+              giteaRepoName: repository.name,
+            });
+            metadataState.components.releases = true;
+            metadataUpdated = true;
+            console.log(
+              `[Sync] Mirrored releases for ${repository.name} after sync`
+            );
+          } catch (releaseError) {
+            console.error(
+              `[Sync] Failed to mirror releases for ${repository.name}: ${
+                releaseError instanceof Error
+                  ? releaseError.message
+                  : String(releaseError)
+              }`
+            );
+          }
+        }
+      }
+
+      if (shouldMirrorIssuesThisRun) {
+        const octokit = ensureOctokit();
+        if (!octokit) {
+          console.warn(
+            `[Sync] Skipping issue mirroring for ${repository.name}: Missing GitHub token`
+          );
+        } else {
+          try {
+            await dependencies.mirrorGitRepoIssuesToGitea({
+              config,
+              octokit,
+              repository,
+              giteaOwner: repoOwner,
+              giteaRepoName: repository.name,
+            });
+            metadataState.components.issues = true;
+            metadataState.components.labels = true;
+            metadataUpdated = true;
+            console.log(
+              `[Sync] Mirrored issues for ${repository.name} after sync`
+            );
+          } catch (issueError) {
+            console.error(
+              `[Sync] Failed to mirror issues for ${repository.name}: ${
+                issueError instanceof Error
+                  ? issueError.message
+                  : String(issueError)
+              }`
+            );
+          }
+        }
+      } else if (
+        config.giteaConfig?.mirrorIssues &&
+        metadataState.components.issues
+      ) {
+        console.log(
+          `[Sync] Issues already mirrored for ${repository.name}; skipping`
+        );
+      }
+
+      if (shouldMirrorPullRequests) {
+        const octokit = ensureOctokit();
+        if (!octokit) {
+          console.warn(
+            `[Sync] Skipping pull request mirroring for ${repository.name}: Missing GitHub token`
+          );
+        } else {
+          try {
+            await dependencies.mirrorGitRepoPullRequestsToGitea({
+              config,
+              octokit,
+              repository,
+              giteaOwner: repoOwner,
+              giteaRepoName: repository.name,
+            });
+            metadataState.components.pullRequests = true;
+            metadataUpdated = true;
+            console.log(
+              `[Sync] Mirrored pull requests for ${repository.name} after sync`
+            );
+          } catch (prError) {
+            console.error(
+              `[Sync] Failed to mirror pull requests for ${repository.name}: ${
+                prError instanceof Error ? prError.message : String(prError)
+              }`
+            );
+          }
+        }
+      } else if (
+        config.giteaConfig?.mirrorPullRequests &&
+        metadataState.components.pullRequests
+      ) {
+        console.log(
+          `[Sync] Pull requests already mirrored for ${repository.name}; skipping`
+        );
+      }
+
+      if (shouldMirrorLabels) {
+        const octokit = ensureOctokit();
+        if (!octokit) {
+          console.warn(
+            `[Sync] Skipping label mirroring for ${repository.name}: Missing GitHub token`
+          );
+        } else {
+          try {
+            await dependencies.mirrorGitRepoLabelsToGitea({
+              config,
+              octokit,
+              repository,
+              giteaOwner: repoOwner,
+              giteaRepoName: repository.name,
+            });
+            metadataState.components.labels = true;
+            metadataUpdated = true;
+            console.log(
+              `[Sync] Mirrored labels for ${repository.name} after sync`
+            );
+          } catch (labelError) {
+            console.error(
+              `[Sync] Failed to mirror labels for ${repository.name}: ${
+                labelError instanceof Error
+                  ? labelError.message
+                  : String(labelError)
+              }`
+            );
+          }
+        }
+      } else if (
+        config.giteaConfig?.mirrorLabels &&
+        metadataState.components.labels
+      ) {
+        console.log(
+          `[Sync] Labels already mirrored for ${repository.name}; skipping`
+        );
+      }
+
+      if (shouldMirrorMilestones) {
+        const octokit = ensureOctokit();
+        if (!octokit) {
+          console.warn(
+            `[Sync] Skipping milestone mirroring for ${repository.name}: Missing GitHub token`
+          );
+        } else {
+          try {
+            await dependencies.mirrorGitRepoMilestonesToGitea({
+              config,
+              octokit,
+              repository,
+              giteaOwner: repoOwner,
+              giteaRepoName: repository.name,
+            });
+            metadataState.components.milestones = true;
+            metadataUpdated = true;
+            console.log(
+              `[Sync] Mirrored milestones for ${repository.name} after sync`
+            );
+          } catch (milestoneError) {
+            console.error(
+              `[Sync] Failed to mirror milestones for ${repository.name}: ${
+                milestoneError instanceof Error
+                  ? milestoneError.message
+                  : String(milestoneError)
+              }`
+            );
+          }
+        }
+      } else if (
+        config.giteaConfig?.mirrorMilestones &&
+        metadataState.components.milestones
+      ) {
+        console.log(
+          `[Sync] Milestones already mirrored for ${repository.name}; skipping`
+        );
+      }
+
+      if (metadataUpdated) {
+        metadataState.lastSyncedAt = new Date().toISOString();
+      }
+
       // Mark repo as "synced" in DB
       await db
         .update(repositories)
@@ -348,6 +592,9 @@ export async function syncGiteaRepoEnhanced({
           lastMirrored: new Date(),
           errorMessage: null,
           mirroredLocation: `${repoOwner}/${repository.name}`,
+          metadata: metadataUpdated
+            ? serializeRepositoryMetadataState(metadataState)
+            : repository.metadata ?? null,
         })
         .where(eq(repositories.id, repository.id!));
 

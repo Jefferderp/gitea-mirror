@@ -66,6 +66,7 @@ export const POST: APIRoute = async ({ request }) => {
       configId: config.id,
       name: repo.name,
       fullName: repo.fullName,
+      normalizedFullName: repo.fullName.toLowerCase(),
       url: repo.url,
       cloneUrl: repo.cloneUrl,
       owner: repo.owner,
@@ -97,6 +98,7 @@ export const POST: APIRoute = async ({ request }) => {
       userId,
       configId: config.id,
       name: org.name,
+      normalizedName: org.name.toLowerCase(),
       avatarUrl: org.avatarUrl,
       membershipRole: org.membershipRole,
       isIncluded: false,
@@ -113,22 +115,22 @@ export const POST: APIRoute = async ({ request }) => {
     await db.transaction(async (tx) => {
       const [existingRepos, existingOrgs] = await Promise.all([
         tx
-          .select({ fullName: repositories.fullName })
+          .select({ normalizedFullName: repositories.normalizedFullName })
           .from(repositories)
           .where(eq(repositories.userId, userId)),
         tx
-          .select({ name: organizations.name })
+          .select({ normalizedName: organizations.normalizedName })
           .from(organizations)
           .where(eq(organizations.userId, userId)),
       ]);
 
-      const existingRepoNames = new Set(existingRepos.map((r) => r.fullName));
-      const existingOrgNames = new Set(existingOrgs.map((o) => o.name));
+      const existingRepoNames = new Set(existingRepos.map((r) => r.normalizedFullName));
+      const existingOrgNames = new Set(existingOrgs.map((o) => o.normalizedName));
 
       insertedRepos = newRepos.filter(
-        (r) => !existingRepoNames.has(r.fullName)
+        (r) => !existingRepoNames.has(r.normalizedFullName)
       );
-      insertedOrgs = newOrgs.filter((o) => !existingOrgNames.has(o.name));
+      insertedOrgs = newOrgs.filter((o) => !existingOrgNames.has(o.normalizedName));
 
       // Batch insert repositories to avoid SQLite parameter limit (dynamic by column count)
       const sample = newRepos[0];
@@ -140,7 +142,7 @@ export const POST: APIRoute = async ({ request }) => {
           await tx
             .insert(repositories)
             .values(batch)
-            .onConflictDoNothing({ target: [repositories.userId, repositories.fullName] });
+            .onConflictDoNothing({ target: [repositories.userId, repositories.normalizedFullName] });
         }
       }
 

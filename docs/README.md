@@ -1,118 +1,39 @@
 # Gitea Mirror Documentation
 
-Welcome to the Gitea Mirror documentation. This guide covers everything you need to know about developing, building, and deploying the open-source version of Gitea Mirror.
+This folder contains engineering and operations references for the open-source Gitea Mirror project. Each guide focuses on the parts of the system that still require bespoke explanation beyond the in-app help and the main `README.md`.
 
-## Documentation Overview
+## Available Guides
 
-### Getting Started
+### Core workflow
+- **[DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md)** – Set up a local environment, run scripts, and understand the repo layout (app + marketing site).
+- **[ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)** – Complete reference for every configuration flag supported by the app and Docker images.
 
-- **[Development Workflow](./DEVELOPMENT_WORKFLOW.md)** - Set up your development environment and start contributing
-- **[Build Guide](./BUILD_GUIDE.md)** - Build Gitea Mirror from source
-- **[Configuration Guide](./CONFIGURATION.md)** - Configure all available options
+### Reliability & recovery
+- **[GRACEFUL_SHUTDOWN.md](./GRACEFUL_SHUTDOWN.md)** – How signal handling, shutdown coordination, and job persistence work in v3.
+- **[RECOVERY_IMPROVEMENTS.md](./RECOVERY_IMPROVEMENTS.md)** – Deep dive into the startup recovery workflow and supporting scripts.
 
-### Deployment
+### Authentication
+- **[SSO-OIDC-SETUP.md](./SSO-OIDC-SETUP.md)** – Configure OIDC/SSO providers through the admin UI.
+- **[SSO_TESTING.md](./SSO_TESTING.md)** – Recipes for local and staging SSO testing (Google, Keycloak, mock providers).
 
-- **[Deployment Guide](./DEPLOYMENT.md)** - Deploy to production environments
-- **[Docker Guide](./DOCKER.md)** - Container-based deployment
-- **[Reverse Proxy Setup](./REVERSE_PROXY.md)** - Configure with nginx/Caddy
+If you are looking for customer-facing playbooks, see the MDX use cases under `www/src/pages/use-cases/`.
 
-### Features
+## Quick start for local development
 
-- **[SSO/OIDC Setup](./SSO-OIDC-SETUP.md)** - Configure authentication providers
-- **[Sponsor Integration](./SPONSOR_INTEGRATION.md)** - GitHub Sponsors integration
-- **[Webhook Configuration](./WEBHOOKS.md)** - Set up GitHub webhooks
-
-### Architecture
-
-- **[Architecture Overview](./ARCHITECTURE.md)** - System design and components
-- **[API Documentation](./API.md)** - REST API endpoints
-- **[Database Schema](./DATABASE.md)** - SQLite structure
-
-### Maintenance
-
-- **[Migration Guide](../MIGRATION_GUIDE.md)** - Upgrade from previous versions
-- **[Better Auth Migration](./BETTER_AUTH_MIGRATION.md)** - Migrate authentication system
-- **[Troubleshooting](./TROUBLESHOOTING.md)** - Common issues and solutions
-- **[Backup & Restore](./BACKUP.md)** - Data management
-
-## Quick Start
-
-1. **Clone and install**:
 ```bash
-git clone https://github.com/yourusername/gitea-mirror.git
+git clone https://github.com/RayLabsHQ/gitea-mirror.git
 cd gitea-mirror
-bun install
+bun run setup           # installs deps and seeds the SQLite DB
+bun run dev             # starts the Astro/Bun app on http://localhost:4321
 ```
 
-2. **Configure**:
-```bash
-cp .env.example .env
-# Edit .env with your GitHub and Gitea tokens
-```
+The first user you create locally becomes the administrator. All other configuration—GitHub owners, Gitea targets, scheduling, cleanup—is done through the **Configuration** screen in the UI.
 
-3. **Initialize and run**:
-```bash
-bun run init-db
-bun run dev
-```
+## Contributing & support
 
-4. **Access**: Open http://localhost:4321
+- 🎯 Contribution guide: [../CONTRIBUTING.md](../CONTRIBUTING.md)
+- 📘 Code of conduct: [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)
+- 🐞 Issues & feature requests: <https://github.com/RayLabsHQ/gitea-mirror/issues>
+- 💬 Discussions: <https://github.com/RayLabsHQ/gitea-mirror/discussions>
 
-## Key Features
-
-- 🔄 **Automatic Syncing** - Keep repositories synchronized
-- 🗂️ **Organization Support** - Mirror entire organizations
-- ⭐ **Starred Repos** - Mirror your starred repositories
-- 🔐 **Self-Hosted** - Full control over your data
-- 🚀 **Fast** - Built with Bun for optimal performance
-- 🔒 **Secure** - JWT authentication, encrypted tokens
-
-## Technology Stack
-
-- **Runtime**: Bun
-- **Framework**: Astro with React
-- **Database**: SQLite with Drizzle ORM
-- **Styling**: Tailwind CSS v4
-- **Authentication**: Better Auth
-
-## System Requirements
-
-- Bun >= 1.2.9
-- Node.js >= 20 (optional, for compatibility)
-- SQLite 3
-- 512MB RAM minimum
-- 1GB disk space
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](../CONTRIBUTING.md) for details.
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-### Code of Conduct
-
-Please read our [Code of Conduct](../CODE_OF_CONDUCT.md) before contributing.
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/gitea-mirror/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/gitea-mirror/discussions)
-- **Wiki**: [GitHub Wiki](https://github.com/yourusername/gitea-mirror/wiki)
-
-## Security
-
-For security issues, please see [SECURITY.md](../SECURITY.md).
-
-## License
-
-Gitea Mirror is open source software licensed under the [MIT License](../LICENSE).
-
----
-
-For detailed information on any topic, please refer to the specific documentation guides listed above.
+Security disclosures should follow the process in [../SECURITY.md](../SECURITY.md).

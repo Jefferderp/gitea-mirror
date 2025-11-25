@@ -306,7 +306,7 @@ export function Dashboard() {
           title="Repositories"
           value={repoCount}
           icon={<GitFork className="h-4 w-4" />}
-          description="Total in mirror queue"
+          description="Total imported repositories"
         />
         <StatusCard
           title="Mirrored"
